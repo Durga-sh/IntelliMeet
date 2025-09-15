@@ -72,14 +72,14 @@ const Hero = () => {
               </span>
             </div>
             
-            <h1 className="text-6xl lg:text-8xl font-black leading-tight">
+            <h1 className="text-4xl lg:text-6xl font-black leading-tight">
               Where{" "}
               <span className="relative">
                 <span className="text-gradient">{typedText}</span>
                 <span className="absolute -right-1 top-0 w-0.5 h-full bg-ai-primary animate-pulse" />
               </span>
               <br />
-              <span className="text-4xl lg:text-5xl font-normal text-muted-foreground">
+              <span className="text-3xl lg:text-4xl font-normal text-muted-foreground">
                 Meet Intelligence
               </span>
             </h1>

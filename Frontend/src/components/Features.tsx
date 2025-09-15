@@ -1,4 +1,4 @@
-import { Bot, Video, MessageSquare, Brain, Sparkles, Zap, Eye, Shield, FileText } from "lucide-react";
+import { Bot, Video, MessageSquare, Brain, Sparkles, Zap, Eye, FileText } from "lucide-react";
 import { useState } from "react";
 
 const features = [
@@ -56,7 +56,7 @@ const Features = () => {
   const [hoveredFeature, setHoveredFeature] = useState<number | null>(null);
 
   return (
-    <section id="features" className="py-24 relative overflow-hidden">
+    <section id="features" className="py-24 pb-12 relative overflow-hidden">
       {/* Animated tech pattern background */}
       <div className="absolute inset-0">
         <div className="absolute inset-0 opacity-5">
@@ -156,57 +156,6 @@ const Features = () => {
               </div>
             </div>
           ))}
-        </div>
-
-        {/* Live metrics dashboard */}
-        <div className="relative">
-          <div className="text-center mb-12">
-            <h3 className="text-3xl font-bold mb-4">Live Platform Metrics</h3>
-            <p className="text-muted-foreground">Real-time data from our production environment</p>
-          </div>
-          
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-8 animate-fade-in">
-            <div className="text-center group">
-              <div className="relative mb-4">
-                <div className="text-4xl font-black text-ai-primary mb-2 group-hover:scale-110 transition-transform">
-                  1.2M+
-                </div>
-                <div className="absolute -top-2 -right-2 w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-              </div>
-              <div className="text-sm text-muted-foreground font-medium">Active Connections</div>
-            </div>
-            
-            <div className="text-center group">
-              <div className="text-4xl font-black text-ai-secondary mb-2 group-hover:scale-110 transition-transform">
-                99.97%
-              </div>
-              <div className="text-sm text-muted-foreground font-medium">Transcription Accuracy</div>
-            </div>
-            
-            <div className="text-center group">
-              <div className="text-4xl font-black text-ai-accent mb-2 group-hover:scale-110 transition-transform">
-                &lt;50ms
-              </div>
-              <div className="text-sm text-muted-foreground font-medium">WebRTC Latency</div>
-            </div>
-            
-            <div className="text-center group">
-              <div className="text-4xl font-black text-ai-glow mb-2 group-hover:scale-110 transition-transform">
-                24/7
-              </div>
-              <div className="text-sm text-muted-foreground font-medium">AI Processing</div>
-            </div>
-            
-            <div className="text-center group">
-              <div className="relative mb-4">
-                <div className="text-4xl font-black text-ai-primary mb-2 group-hover:scale-110 transition-transform">
-                  150+
-                </div>
-                <Shield className="absolute -top-1 -right-1 w-4 h-4 text-green-500" />
-              </div>
-              <div className="text-sm text-muted-foreground font-medium">Enterprise Clients</div>
-            </div>
-          </div>
         </div>
       </div>
     </section>

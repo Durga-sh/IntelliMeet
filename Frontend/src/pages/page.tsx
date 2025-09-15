@@ -1,8 +1,11 @@
 import Navigation from "../components/Navigation";
 import Hero from "../components/Hero";
 import Features from "../components/Features";
-import TechStack from "../components/TechStack";
+import LiveDemo from "../components/LiveDemo";
+import Security from "../components/Security";
+import Pricing from "../components/Pricing";
 import CTA from "../components/CTA";
+import Footer from "../components/Footer";
 
 const Index = () => {
   return (
@@ -10,10 +13,13 @@ const Index = () => {
       <Navigation />
       <main>
         <Hero />
-        <TechStack />
         <Features />
+        <LiveDemo />
+        <Security />
+        <Pricing />
         <CTA />
       </main>
+      <Footer />
     </div>
   );
 };
