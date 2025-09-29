@@ -1,19 +1,31 @@
-const passport = require("passport");
-const GoogleStrategy = require("passport-google-oauth20").Strategy;
-const JwtStrategy = require("passport-jwt").Strategy;
-const ExtractJwt = require("passport-jwt").ExtractJwt;
-const User = require("../models/User");
-const config = require("./config");
-const { OAuth2Client } = require("google-auth-library");
+import passport from "passport";
+import { Strategy as GoogleStrategy, Profile } from "passport-google-oauth20";
+import {
+  Strategy as JwtStrategy,
+  ExtractJwt,
+  StrategyOptions,
+} from "passport-jwt";
+import User from "../models/User";
+import config from "./config";
+import { OAuth2Client } from "google-auth-library";
+import { Document } from "mongoose";
+
+interface UserDocument extends Document {
+  _id: string;
+  googleId?: string;
+  email: string;
+  name: string;
+  avatar?: string;
+}
 
 // JWT Strategy
-const jwtOptions = {
+const jwtOptions: StrategyOptions = {
   jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
   secretOrKey: config.JWT_SECRET,
 };
 
 passport.use(
-  new JwtStrategy(jwtOptions, async (payload, done) => {
+  new JwtStrategy(jwtOptions, async (payload: any, done: any) => {
     try {
       const user = await User.findById(payload.id);
       if (user) {
@@ -34,7 +46,12 @@ passport.use(
       clientSecret: config.GOOGLE_CLIENT_SECRET,
       callbackURL: config.GOOGLE_CALLBACK_URL,
     },
-    async (accessToken, refreshToken, profile, done) => {
+    async (
+      accessToken: string,
+      refreshToken: string,
+      profile: Profile,
+      done: any
+    ) => {
       try {
         // Check if user exists
         let user = await User.findOne({ googleId: profile.id });
@@ -43,9 +60,9 @@ passport.use(
           // Create new user
           user = new User({
             googleId: profile.id,
-            email: profile.emails[0].value,
+            email: profile.emails?.[0].value,
             name: profile.displayName,
-            avatar: profile.photos[0].value,
+            avatar: profile.photos?.[0].value,
           });
           await user.save();
         }
@@ -60,7 +77,4 @@ passport.use(
 
 const client = new OAuth2Client(config.GOOGLE_CLIENT_ID);
 
-module.exports = {
-  passport,
-  client,
-};
+export { passport, client };

@@ -1,14 +1,27 @@
-import React, { createContext, useState, useEffect } from "react";
-import { verifyToken } from "../api/auth";
+import React, { createContext, useState, useEffect, ReactNode } from "react";
+import { verifyToken, User } from "../api/auth";
 import { setToken, removeToken, setAuthHeader } from "../utils/tokenManager";
 import axios from "axios";
 
-export const AuthContext = createContext();
+interface AuthContextType {
+  user: User | null;
+  loading: boolean;
+  error: string | null;
+  loginUser: (user: User, token: string) => void;
+  logoutUser: () => void;
+  setError: (error: string | null) => void;
+}
 
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const checkLoggedIn = async () => {
@@ -48,8 +61,8 @@ export const AuthProvider = ({ children }) => {
             window.history.replaceState({}, document.title, "/");
           }
         } catch (err) {
-          console.error("Google auth error:", err);
-          setError("Failed to authenticate with Google");
+          console.error("Error processing Google OAuth callback:", err);
+          setError("Failed to complete Google authentication");
         }
       }
     };
@@ -57,31 +70,32 @@ export const AuthProvider = ({ children }) => {
     handleGoogleAuth();
   }, []);
 
-  const loginUser = (userData, token) => {
+  const loginUser = (userData: User, token: string) => {
+    setUser(userData);
     setToken(token);
     setAuthHeader(axios);
-    setUser(userData);
+    setError(null);
   };
 
   const logoutUser = () => {
-    removeToken();
-    // Clear auth header
-    delete axios.defaults.headers.common["Authorization"];
     setUser(null);
+    removeToken();
+    setError(null);
+    // Remove auth header
+    delete axios.defaults.headers.common["Authorization"];
+  };
+
+  const contextValue: AuthContextType = {
+    user,
+    loading,
+    error,
+    loginUser,
+    logoutUser,
+    setError,
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        error,
-        setError,
-        loginUser,
-        logoutUser,
-        isAuthenticated: !!user,
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

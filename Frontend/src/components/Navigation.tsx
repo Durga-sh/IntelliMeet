@@ -1,10 +1,14 @@
 import { Button } from "./ui/button";
-import { Brain, Menu, X, Sparkles, Zap } from "lucide-react";
+import { Brain, Menu, X, Sparkles, Zap, LogOut, User } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../hooks/useAuth";
 
 const Navigation = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const navigate = useNavigate();
+  const { user, logoutUser } = useAuth();
 
   const navItems = [
     { label: "Tech Stack", href: "#tech" },
@@ -12,6 +16,15 @@ const Navigation = () => {
     { label: "Pricing", href: "#pricing" },
     { label: "Docs", href: "#docs" }
   ];
+
+  const handleSignInClick = () => {
+    navigate('/login');
+  };
+
+  const handleLogout = () => {
+    logoutUser();
+    setIsMenuOpen(false);
+  };
 
   useEffect(() => {
     const handleScroll = () => {
@@ -65,18 +78,34 @@ const Navigation = () => {
 
           {/* Desktop CTA */}
           <div className="hidden md:flex items-center space-x-4">
-            <Button variant="ghost" className="relative group">
-              Sign In
-              <div className="absolute inset-0 bg-gradient-to-r from-ai-primary/10 to-ai-secondary/10 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg" />
-            </Button>
-            
-            <Button variant="ai" className="relative group overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-ai-primary to-ai-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
-              <span className="relative z-10 flex items-center space-x-2">
-                <Zap className="w-4 h-4" />
-                <span>Start Building</span>
-              </span>
-            </Button>
+            {user ? (
+              <>
+                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                  <User className="w-4 h-4" />
+                  <span>Welcome, {user.name}</span>
+                </div>
+                <Button variant="ghost" className="relative group" onClick={handleLogout}>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Logout
+                  <div className="absolute inset-0 bg-gradient-to-r from-ai-primary/10 to-ai-secondary/10 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg" />
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" className="relative group" onClick={handleSignInClick}>
+                  Sign In
+                  <div className="absolute inset-0 bg-gradient-to-r from-ai-primary/10 to-ai-secondary/10 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg" />
+                </Button>
+                
+                <Button variant="ai" className="relative group overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-r from-ai-primary to-ai-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <span className="relative z-10 flex items-center space-x-2">
+                    <Zap className="w-4 h-4" />
+                    <span>Start Building</span>
+                  </span>
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Mobile menu button */}
@@ -107,11 +136,26 @@ const Navigation = () => {
                 </a>
               ))}
               <div className="pt-4 space-y-3">
-                <Button variant="ghost" className="w-full">Sign In</Button>
-                <Button variant="ai" className="w-full">
-                  <Zap className="w-4 h-4 mr-2" />
-                  Start Building
-                </Button>
+                {user ? (
+                  <>
+                    <div className="flex items-center space-x-2 text-sm text-muted-foreground px-4 py-2">
+                      <User className="w-4 h-4" />
+                      <span>Welcome, {user.name}</span>
+                    </div>
+                    <Button variant="ghost" className="w-full" onClick={handleLogout}>
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Logout
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="ghost" className="w-full" onClick={handleSignInClick}>Sign In</Button>
+                    <Button variant="ai" className="w-full">
+                      <Zap className="w-4 h-4 mr-2" />
+                      Start Building
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           </div>

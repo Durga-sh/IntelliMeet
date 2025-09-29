@@ -1,20 +1,17 @@
-import React from "react";
-import { Route, Routes, Navigate } from "react-router-dom";
-import { useAuth } from "./hooks/useAuth";
-
-// Pages
+import { Route, Routes } from "react-router-dom";
+import Index from "./pages/page";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
-
-
-// Protected Route Component
-
+import NotFound from "./pages/NotFound";
 
 const AppRoutes = () => {
   return (
     <Routes>
+      <Route path="/" element={<Index />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/auth/google/callback" element={<Index />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 };

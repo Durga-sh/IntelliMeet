@@ -1,7 +1,36 @@
-const User = require("../models/User");
-const { generateToken } = require("../middleware/auth");
-const nodemailer = require("nodemailer");
-const crypto = require("crypto");
+import { Request, Response } from "express";
+import User from "../models/User";
+import { generateToken } from "../middleware/auth";
+import nodemailer from "nodemailer";
+import crypto from "crypto";
+
+// Interfaces for type safety
+interface TempUserData {
+  name: string;
+  email: string;
+  password: string;
+  role: string;
+  otp: string;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+interface PasswordResetOTPData {
+  userId: string;
+  email: string;
+  otp: string;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+interface AuthenticatedRequest extends Request {
+  user?: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+  };
+}
 
 // Email transporter configuration
 const transporter = nodemailer.createTransport({
@@ -16,7 +45,7 @@ const transporter = nodemailer.createTransport({
 });
 
 // Verify transporter configuration
-transporter.verify(function (error, success) {
+transporter.verify(function (error: Error | null, success: boolean) {
   if (error) {
     console.error("Email transporter verification failed:", error);
   } else {
@@ -25,18 +54,18 @@ transporter.verify(function (error, success) {
 });
 
 // Store temporary user data and OTP (in production, use Redis or database)
-const tempUsers = new Map();
+const tempUsers = new Map<string, TempUserData>();
 
 // Store password reset OTPs (in production, use Redis or database)
-const passwordResetOTPs = new Map();
+const passwordResetOTPs = new Map<string, PasswordResetOTPData>();
 
 // Generate 6-digit OTP
-const generateOTP = () => {
+const generateOTP = (): string => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
 // Send OTP email
-const sendOTPEmail = async (email, otp) => {
+const sendOTPEmail = async (email: string, otp: string): Promise<void> => {
   const mailOptions = {
     from: process.env.EMAIL_USER,
     to: email,
@@ -56,14 +85,21 @@ const sendOTPEmail = async (email, otp) => {
 };
 
 // Register a new user (Step 1: Send OTP)
-exports.register = async (req, res) => {
+export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password, role } = req.body;
+    const {
+      name,
+      email,
+      password,
+      role,
+    }: { name: string; email: string; password: string; role: string } =
+      req.body;
 
     // Check if user already exists
     let existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+      res.status(400).json({ message: "User already exists" });
+      return;
     }
 
     // Generate OTP
@@ -92,34 +128,39 @@ exports.register = async (req, res) => {
     });
   } catch (error) {
     console.error("Registration error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ message: "Server error", error: errorMessage });
   }
 };
 
 // Verify OTP and complete registration (Step 2)
-exports.verifyOTP = async (req, res) => {
+export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { tempUserId, otp } = req.body;
+    const { tempUserId, otp }: { tempUserId: string; otp: string } = req.body;
 
     // Get temporary user data
     const tempUserData = tempUsers.get(tempUserId);
     if (!tempUserData) {
-      return res
+      res
         .status(400)
         .json({ message: "Invalid or expired verification session" });
+      return;
     }
 
     // Check if OTP is expired
     if (new Date() > tempUserData.expiresAt) {
       tempUsers.delete(tempUserId);
-      return res
+      res
         .status(400)
         .json({ message: "OTP has expired. Please register again." });
+      return;
     }
 
     // Verify OTP
     if (tempUserData.otp !== otp) {
-      return res.status(400).json({ message: "Invalid OTP" });
+      res.status(400).json({ message: "Invalid OTP" });
+      return;
     }
 
     // Create new user
@@ -137,7 +178,12 @@ exports.verifyOTP = async (req, res) => {
     tempUsers.delete(tempUserId);
 
     // Generate JWT token
-    const token = generateToken(user);
+    const token = generateToken({
+      _id: user._id.toString(),
+      email: user.email,
+      role: user.role,
+      name: user.name,
+    });
 
     res.status(201).json({
       success: true,
@@ -152,19 +198,22 @@ exports.verifyOTP = async (req, res) => {
     });
   } catch (error) {
     console.error("OTP verification error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ message: "Server error", error: errorMessage });
   }
 };
 
 // Resend OTP
-exports.resendOTP = async (req, res) => {
+export const resendOTP = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { tempUserId } = req.body;
+    const { tempUserId }: { tempUserId: string } = req.body;
 
     // Get temporary user data
     const tempUserData = tempUsers.get(tempUserId);
     if (!tempUserData) {
-      return res.status(400).json({ message: "Invalid verification session" });
+      res.status(400).json({ message: "Invalid verification session" });
+      return;
     }
 
     // Generate new OTP
@@ -186,30 +235,34 @@ exports.resendOTP = async (req, res) => {
     });
   } catch (error) {
     console.error("Resend OTP error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ message: "Server error", error: errorMessage });
   }
 };
 
 // Forgot Password - Send OTP
-// Forgot Password - Send OTP
-exports.forgotPassword = async (req, res) => {
+export const forgotPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
-    const { email } = req.body;
+    const { email }: { email: string } = req.body;
 
     // Check if user exists
     const user = await User.findOne({ email });
     if (!user) {
-      return res
-        .status(404)
-        .json({ message: "User not found with this email" });
+      res.status(404).json({ message: "User not found with this email" });
+      return;
     }
 
     // Check if user signed up with Google and doesn't have a password
     if (!user.password) {
-      return res.status(400).json({
+      res.status(400).json({
         message:
           "This account was created with Google. Please login with Google.",
       });
+      return;
     }
 
     // Generate OTP
@@ -218,7 +271,7 @@ exports.forgotPassword = async (req, res) => {
     // Store OTP with expiry (10 minutes)
     const tempResetId = crypto.randomUUID();
     passwordResetOTPs.set(tempResetId, {
-      userId: user._id,
+      userId: user._id.toString(),
       email: user.email,
       otp,
       createdAt: new Date(),
@@ -236,34 +289,40 @@ exports.forgotPassword = async (req, res) => {
     });
   } catch (error) {
     console.error("Forgot password error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ message: "Server error", error: errorMessage });
   }
 };
 
 // Verify Password Reset OTP
-exports.verifyPasswordResetOTP = async (req, res) => {
+export const verifyPasswordResetOTP = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
-    const { tempResetId, otp } = req.body;
+    const { tempResetId, otp }: { tempResetId: string; otp: string } = req.body;
 
     // Get OTP data
     const otpData = passwordResetOTPs.get(tempResetId);
     if (!otpData) {
-      return res
-        .status(400)
-        .json({ message: "Invalid or expired OTP session" });
+      res.status(400).json({ message: "Invalid or expired OTP session" });
+      return;
     }
 
     // Check if OTP is expired
     if (new Date() > otpData.expiresAt) {
       passwordResetOTPs.delete(tempResetId);
-      return res
+      res
         .status(400)
         .json({ message: "OTP has expired. Please request a new one." });
+      return;
     }
 
     // Verify OTP
     if (otpData.otp !== otp) {
-      return res.status(400).json({ message: "Invalid OTP" });
+      res.status(400).json({ message: "Invalid OTP" });
+      return;
     }
 
     res.status(200).json({
@@ -274,35 +333,44 @@ exports.verifyPasswordResetOTP = async (req, res) => {
     });
   } catch (error) {
     console.error("Verify password reset OTP error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ message: "Server error", error: errorMessage });
   }
 };
 
 // Reset Password
-exports.resetPassword = async (req, res) => {
+export const resetPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
-    const { tempResetId, newPassword } = req.body;
+    const {
+      tempResetId,
+      newPassword,
+    }: { tempResetId: string; newPassword: string } = req.body;
 
     // Get OTP data
     const otpData = passwordResetOTPs.get(tempResetId);
     if (!otpData) {
-      return res
-        .status(400)
-        .json({ message: "Invalid or expired OTP session" });
+      res.status(400).json({ message: "Invalid or expired OTP session" });
+      return;
     }
 
     // Check if OTP is expired
     if (new Date() > otpData.expiresAt) {
       passwordResetOTPs.delete(tempResetId);
-      return res.status(400).json({
+      res.status(400).json({
         message: "OTP has expired. Please request a new one.",
       });
+      return;
     }
 
     // Find user and update password
     const user = await User.findById(otpData.userId);
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      res.status(404).json({ message: "User not found" });
+      return;
     }
 
     // Update password
@@ -318,34 +386,44 @@ exports.resetPassword = async (req, res) => {
     });
   } catch (error) {
     console.error("Reset password error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ message: "Server error", error: errorMessage });
   }
 };
 
 // Login user
-exports.login = async (req, res) => {
+export const login = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const { email, password }: { email: string; password: string } = req.body;
 
     // Check if user exists
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      res.status(400).json({ message: "Invalid credentials" });
+      return;
     }
 
     // If user signed up with Google and doesn't have a password
     if (!user.password) {
-      return res.status(400).json({ message: "Please login with Google" });
+      res.status(400).json({ message: "Please login with Google" });
+      return;
     }
 
     // Check password
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      res.status(400).json({ message: "Invalid credentials" });
+      return;
     }
 
     // Generate JWT token
-    const token = generateToken(user);
+    const token = generateToken({
+      _id: user._id.toString(),
+      email: user.email,
+      role: user.role,
+      name: user.name,
+    });
 
     res.json({
       success: true,
@@ -359,15 +437,28 @@ exports.login = async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ message: "Server error", error: errorMessage });
   }
 };
 
 // Google OAuth callback
-exports.googleCallback = (req, res) => {
+export const googleCallback = (req: Request, res: Response): void => {
   try {
     // Generate token for the authenticated user
-    const token = generateToken(req.user);
+    if (!req.user) {
+      res.status(401).json({ message: "User not authenticated" });
+      return;
+    }
+
+    const user = req.user as any; // Type assertion since passport user types are complex
+    const token = generateToken({
+      _id: user._id.toString(),
+      email: user.email,
+      role: user.role,
+      name: user.name,
+    });
 
     // Redirect to frontend with token
     res.redirect(
@@ -382,12 +473,22 @@ exports.googleCallback = (req, res) => {
 };
 
 // Get current user
-exports.getCurrentUser = async (req, res) => {
+export const getCurrentUser = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
   try {
+    if (!req.user?.id) {
+      res.status(401).json({ message: "User not authenticated" });
+      return;
+    }
+
     const user = await User.findById(req.user.id).select("-password");
     res.json(user);
   } catch (error) {
     console.error("Get user error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ message: "Server error", error: errorMessage });
   }
 };

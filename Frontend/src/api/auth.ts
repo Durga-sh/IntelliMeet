@@ -1,12 +1,49 @@
-// frontend/src/api/auth.js
 
 import axios from "axios";
+
+// Types
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  avatar?: string;
+}
+
+export interface RegisterData {
+  name: string;
+  email: string;
+  password: string;
+}
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+export interface OTPData {
+  tempUserId: string;
+  otp: string;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  user: User;
+  token: string;
+}
+
+export interface OTPResponse {
+  success: boolean;
+  message: string;
+  tempUserId?: string;
+}
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 // Register user (Step 1: Send OTP)
-export const register = async (userData) => {
+export const register = async (
+  userData: RegisterData
+): Promise<OTPResponse> => {
   const response = await fetch(`${API_BASE_URL}/auth/register`, {
     method: "POST",
     headers: {
@@ -25,7 +62,7 @@ export const register = async (userData) => {
 };
 
 // Verify OTP (Step 2: Complete registration)
-export const verifyOTP = async (otpData) => {
+export const verifyOTP = async (otpData: OTPData): Promise<AuthResponse> => {
   const response = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
     method: "POST",
     headers: {
@@ -44,7 +81,7 @@ export const verifyOTP = async (otpData) => {
 };
 
 // Resend OTP
-export const resendOTP = async (tempUserId) => {
+export const resendOTP = async (tempUserId: string): Promise<OTPResponse> => {
   const response = await fetch(`${API_BASE_URL}/auth/resend-otp`, {
     method: "POST",
     headers: {
@@ -63,7 +100,9 @@ export const resendOTP = async (tempUserId) => {
 };
 
 // Login user
-export const login = async (credentials) => {
+export const login = async (
+  credentials: LoginCredentials
+): Promise<AuthResponse> => {
   try {
     console.log("Sending login request with credentials:", credentials);
     const response = await fetch(`${API_BASE_URL}/auth/login`, {
@@ -92,7 +131,9 @@ export const login = async (credentials) => {
 };
 
 // Forgot Password - Send reset OTP
-export const forgotPassword = async (email) => {
+export const forgotPassword = async (
+  email: string
+): Promise<{ message: string; tempResetId?: string }> => {
   const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
     method: "POST",
     headers: {
@@ -111,7 +152,10 @@ export const forgotPassword = async (email) => {
 };
 
 // Verify Password Reset OTP
-export const verifyPasswordResetOTP = async (tempResetId, otp) => {
+export const verifyPasswordResetOTP = async (
+  tempResetId: string,
+  otp: string
+): Promise<{ message: string; verified: boolean }> => {
   const response = await fetch(
     `${API_BASE_URL}/auth/verify-password-reset-otp`,
     {
@@ -133,7 +177,10 @@ export const verifyPasswordResetOTP = async (tempResetId, otp) => {
 };
 
 // Reset Password
-export const resetPassword = async (tempResetId, newPassword) => {
+export const resetPassword = async (
+  tempResetId: string,
+  newPassword: string
+): Promise<{ message: string }> => {
   const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
     method: "POST",
     headers: {
@@ -152,20 +199,22 @@ export const resetPassword = async (tempResetId, newPassword) => {
 };
 
 // Google Login
-export const googleLogin = async (credential) => {
+export const googleLogin = async (
+  credential: string
+): Promise<AuthResponse> => {
   try {
     const response = await axios.post(`${API_BASE_URL}/auth/google/verify`, {
       credential,
     });
     return response.data;
-  } catch (error) {
-    console.error('Google login error:', error);
+  } catch (error: any) {
+    console.error("Google login error:", error);
     throw error.response?.data || error;
   }
 };
 
 // Verify Token
-export const verifyToken = async () => {
+export const verifyToken = async (): Promise<User | false> => {
   const token = localStorage.getItem("token");
   if (!token) return false;
 
@@ -181,7 +230,7 @@ export const verifyToken = async () => {
 };
 
 // Get current user
-export const getCurrentUser = async () => {
+export const getCurrentUser = async (): Promise<User> => {
   const token = localStorage.getItem("token");
   if (!token) {
     throw new Error("No token found");

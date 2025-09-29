@@ -1,36 +1,49 @@
-import React, { useState } from "react";
+import React, { useState, ChangeEvent, FormEvent } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { register, verifyOTP, resendOTP } from "../../api/auth";
 import { useAuth } from "../../hooks/useAuth";
 
-const RegisterForm = () => {
-  const [step, setStep] = useState(1); // 1: Registration Form, 2: OTP Verification
-  const [formData, setFormData] = useState({
+interface RegisterFormData {
+  name: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+  role: string;
+}
+
+interface OTPFormData {
+  otp: string;
+  tempUserId: string;
+}
+
+const RegisterForm: React.FC = () => {
+  const [step, setStep] = useState<number>(1); // 1: Registration Form, 2: OTP Verification
+  const [formData, setFormData] = useState<RegisterFormData>({
     name: "",
     email: "",
     password: "",
     confirmPassword: "",
     role: "user", // Default role
   });
-  const [otpData, setOtpData] = useState({
+  const [otpData, setOtpData] = useState<OTPFormData>({
     otp: "",
     tempUserId: "",
   });
-  const [isLoading, setIsLoading] = useState(false);
-  const [formError, setFormError] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
-  const [countdown, setCountdown] = useState(0);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [formError, setFormError] = useState<string>("");
+  const [successMessage, setSuccessMessage] = useState<string>("");
+  const [countdown, setCountdown] = useState<number>(0);
   const navigate = useNavigate();
   const { loginUser } = useAuth();
 
-  const handleChange = (e) => {
+  const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
     });
   };
 
-  const handleOTPChange = (e) => {
+  const handleOTPChange = (e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, "").slice(0, 6); // Only digits, max 6
     setOtpData({
       ...otpData,
@@ -38,7 +51,7 @@ const RegisterForm = () => {
     });
   };
 
-  const validateForm = () => {
+  const validateForm = (): boolean => {
     if (formData.password !== formData.confirmPassword) {
       setFormError("Passwords do not match");
       return false;
@@ -65,7 +78,7 @@ const RegisterForm = () => {
     }, 1000);
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     if (!validateForm()) {
@@ -100,7 +113,7 @@ const RegisterForm = () => {
       } else {
         setFormError("Invalid response from server");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Registration error details:", err);
       setFormError(err.message || "Failed to register. Please try again.");
     } finally {
@@ -108,7 +121,7 @@ const RegisterForm = () => {
     }
   };
 
-  const handleOTPSubmit = async (e) => {
+  const handleOTPSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     if (otpData.otp.length !== 6) {
@@ -129,11 +142,11 @@ const RegisterForm = () => {
 
       if (response.success && response.user && response.token) {
         loginUser(response.user, response.token);
-        navigate("/dashboard");
+        navigate("/"); // Redirect to landing page after successful registration
       } else {
         setFormError("Invalid response from server");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("OTP verification error:", err);
       setFormError(err.message || "Failed to verify OTP. Please try again.");
     } finally {
@@ -155,7 +168,7 @@ const RegisterForm = () => {
         setSuccessMessage("New OTP sent to your email!");
         startCountdown();
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Resend OTP error:", err);
       setFormError(err.message || "Failed to resend OTP. Please try again.");
     } finally {
@@ -200,7 +213,7 @@ const RegisterForm = () => {
               value={otpData.otp}
               onChange={handleOTPChange}
               required
-              maxLength="6"
+              maxLength={6}
               className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-3 text-white text-center text-2xl font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               placeholder="000000"
             />
@@ -322,7 +335,7 @@ const RegisterForm = () => {
             value={formData.password}
             onChange={handleChange}
             required
-            minLength="6"
+            minLength={6}
             className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
             placeholder="••••••••"
           />

@@ -1,15 +1,14 @@
-const express = require("express");
-const cors = require("cors");
-const passport = require("passport");
-const connectDB = require("./config/db");
-const path = require("path");
+import express, { Application, Request, Response, NextFunction } from "express";
+import cors from "cors";
+import passport from "passport";
+import connectDB from "./config/db";
+import path from "path";
 
 // Import routes
-const authRoutes = require("./routes/auth");
-
+import authRoutes from "./routes/auth";
 
 // Initialize app
-const app = express();
+const app: Application = express();
 
 // Connect to database
 connectDB();
@@ -31,9 +30,8 @@ require("./config/passport");
 // Routes
 app.use("/api/auth", authRoutes);
 
-
 // Error handling middleware
-app.use((err, req, res, next) => {
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error(err.stack);
   res.status(500).json({
     message: "Internal Server Error",
@@ -41,4 +39,4 @@ app.use((err, req, res, next) => {
   });
 });
 
-module.exports = app;
+export default app;

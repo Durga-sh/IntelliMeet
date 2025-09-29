@@ -1,26 +1,31 @@
-import React, { useState } from "react";
+import React, { useState, ChangeEvent, FormEvent } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { login } from "../../api/auth";
 import { useAuth } from "../../hooks/useAuth";
 
-const LoginForm = () => {
-  const [formData, setFormData] = useState({
+interface LoginFormData {
+  email: string;
+  password: string;
+}
+
+const LoginForm: React.FC = () => {
+  const [formData, setFormData] = useState<LoginFormData>({
     email: "",
     password: "",
   });
-  const [isLoading, setIsLoading] = useState(false);
-  const [formError, setFormError] = useState("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [formError, setFormError] = useState<string>("");
   const navigate = useNavigate();
   const { loginUser, setError } = useAuth();
 
-  const handleChange = (e) => {
+  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
     });
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     setFormError("");
@@ -28,8 +33,8 @@ const LoginForm = () => {
     try {
       const { user, token } = await login(formData);
       loginUser(user, token);
-      navigate("/dashboard");
-    } catch (err) {
+      navigate("/"); // Redirect to landing page after successful login
+    } catch (err: any) {
       console.error("Login error:", err);
       setFormError(err.message || "Failed to login. Please try again.");
     } finally {
