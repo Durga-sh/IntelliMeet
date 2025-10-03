@@ -9,6 +9,7 @@ const passport_1 = __importDefault(require("passport"));
 const db_1 = __importDefault(require("./config/db"));
 // Import routes
 const auth_1 = __importDefault(require("./routes/auth"));
+const videoCall_1 = __importDefault(require("./routes/videoCall"));
 // Initialize app
 const app = (0, express_1.default)();
 // Connect to database
@@ -25,6 +26,7 @@ app.use(passport_1.default.initialize());
 require("./config/passport");
 // Routes
 app.use("/api/auth", auth_1.default);
+app.use("/api/video", videoCall_1.default);
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);

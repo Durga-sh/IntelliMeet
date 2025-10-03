@@ -8,18 +8,16 @@ const User_1 = __importDefault(require("../models/User"));
 const auth_1 = require("../middleware/auth");
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const crypto_1 = __importDefault(require("crypto"));
-// Email transporter configuration
 const transporter = nodemailer_1.default.createTransport({
     service: "gmail",
     auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS, // This should be your Gmail App Password
+        pass: process.env.EMAIL_PASS,
     },
     tls: {
         rejectUnauthorized: false,
     },
 });
-// Verify transporter configuration
 transporter.verify(function (error, success) {
     if (error) {
         console.error("Email transporter verification failed:", error);
@@ -28,7 +26,6 @@ transporter.verify(function (error, success) {
         console.log("Email server is ready to take our messages");
     }
 });
-// Store temporary user data and OTP (in production, use Redis or database)
 const tempUsers = new Map();
 // Store password reset OTPs (in production, use Redis or database)
 const passwordResetOTPs = new Map();
@@ -36,7 +33,6 @@ const passwordResetOTPs = new Map();
 const generateOTP = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
 };
-// Send OTP email
 const sendOTPEmail = async (email, otp) => {
     const mailOptions = {
         from: process.env.EMAIL_USER,
@@ -133,7 +129,7 @@ const verifyOTP = async (req, res) => {
             _id: user._id.toString(),
             email: user.email,
             role: user.role,
-            name: user.name
+            name: user.name,
         });
         res.status(201).json({
             success: true,
@@ -334,7 +330,7 @@ const login = async (req, res) => {
             _id: user._id.toString(),
             email: user.email,
             role: user.role,
-            name: user.name
+            name: user.name,
         });
         res.json({
             success: true,
@@ -367,7 +363,7 @@ const googleCallback = (req, res) => {
             _id: user._id.toString(),
             email: user.email,
             role: user.role,
-            name: user.name
+            name: user.name,
         });
         // Redirect to frontend with token
         res.redirect(`${process.env.FRONTEND_URL}/auth/google/callback?token=${token}`);

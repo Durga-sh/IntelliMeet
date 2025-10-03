@@ -4,7 +4,6 @@ import { generateToken } from "../middleware/auth";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
 
-// Interfaces for type safety
 interface TempUserData {
   name: string;
   email: string;
@@ -32,19 +31,17 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
-// Email transporter configuration
+
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // This should be your Gmail App Password
+    pass: process.env.EMAIL_PASS, 
   },
   tls: {
     rejectUnauthorized: false,
   },
 });
-
-// Verify transporter configuration
 transporter.verify(function (error: Error | null, success: boolean) {
   if (error) {
     console.error("Email transporter verification failed:", error);
@@ -53,7 +50,7 @@ transporter.verify(function (error: Error | null, success: boolean) {
   }
 });
 
-// Store temporary user data and OTP (in production, use Redis or database)
+
 const tempUsers = new Map<string, TempUserData>();
 
 // Store password reset OTPs (in production, use Redis or database)
@@ -64,7 +61,6 @@ const generateOTP = (): string => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send OTP email
 const sendOTPEmail = async (email: string, otp: string): Promise<void> => {
   const mailOptions = {
     from: process.env.EMAIL_USER,
