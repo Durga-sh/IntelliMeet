@@ -71,13 +71,17 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
           },
           onRemoteStream: (userId: string, stream: MediaStream) => {
             console.log("Received remote stream from:", userId);
-            const user = users.find(u => u.id === userId);
-            if (user) {
-              setRemoteVideos(prev => {
-                const filtered = prev.filter(rv => rv.userId !== userId);
-                return [...filtered, { userId, stream, user }];
-              });
-            }
+            // Use current users state instead of stale closure
+            setUsers(currentUsers => {
+              const user = currentUsers.find(u => u.id === userId);
+              if (user) {
+                setRemoteVideos(prev => {
+                  const filtered = prev.filter(rv => rv.userId !== userId);
+                  return [...filtered, { userId, stream, user }];
+                });
+              }
+              return currentUsers;
+            });
           },
           onError: (err: any) => {
             console.error("WebRTC Error:", err);
@@ -86,18 +90,17 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
         };
 
         // Connect to server
+        console.log("Connecting to server...");
         await webrtcService.connect();
+        console.log("Connected to server");
         
         // Join room
+        console.log("Joining room:", roomId, "as:", userName);
         await webrtcService.joinRoom(roomId, userName);
+        console.log("Joined room successfully");
         
-        // Get local stream and display it
-        const localStream = webrtcService.getLocalStream();
-        if (localVideoRef.current && localStream) {
-          localVideoRef.current.srcObject = localStream;
-        }
-
         setIsConnected(true);
+        console.log("VideoCall component initialized successfully");
       } catch (err: any) {
         console.error("Failed to initialize call:", err);
         setError(err.message || "Failed to join the call");
@@ -109,7 +112,7 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
     return () => {
       webrtcService.disconnect();
     };
-  }, [roomId, userName, users]);
+  }, [roomId, userName]);
 
   // Update remote video refs when remote videos change
   useEffect(() => {
@@ -120,6 +123,17 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
       }
     });
   }, [remoteVideos]);
+
+  // Handle local video stream display
+  useEffect(() => {
+    if (isConnected && localVideoRef.current) {
+      const localStream = webrtcService.getLocalStream();
+      if (localStream) {
+        localVideoRef.current.srcObject = localStream;
+        console.log("Local video stream set:", localStream);
+      }
+    }
+  }, [isConnected]);
 
   const handleToggleVideo = () => {
     webrtcService.toggleVideo();

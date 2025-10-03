@@ -65,7 +65,9 @@ class WebRTCService {
 
     try {
       // Get user media first
+      console.log("Getting user media...");
       await this.getUserMedia();
+      console.log("User media obtained:", this.localStream);
 
       // Join the room
       this.socket.emit("join-room", {
@@ -87,7 +89,23 @@ class WebRTCService {
     }
   ): Promise<MediaStream> {
     try {
+      // Check if browser supports getUserMedia
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("getUserMedia is not supported in this browser");
+      }
+
       this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // Ensure the stream has tracks
+      if (!this.localStream.getTracks().length) {
+        throw new Error("No media tracks obtained");
+      }
+
+      console.log("Successfully obtained user media:", {
+        videoTracks: this.localStream.getVideoTracks().length,
+        audioTracks: this.localStream.getAudioTracks().length,
+      });
+
       return this.localStream;
     } catch (error) {
       console.error("Failed to get user media:", error);
