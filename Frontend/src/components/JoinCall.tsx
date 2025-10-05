@@ -76,25 +76,25 @@ const JoinCall: React.FC<JoinCallProps> = ({ onJoinCall, onError }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <Card className="w-full max-w-md shadow-[var(--shadow-card)] border-border/50 backdrop-blur-sm">
         <CardHeader className="text-center">
           <CardTitle className="flex items-center justify-center space-x-2 text-2xl">
-            <Video className="h-8 w-8 text-blue-600" />
-            <span>IntelliMeet</span>
+            <Video className="h-8 w-8 text-ai-primary" />
+            <span className="bg-gradient-to-r from-ai-primary to-ai-secondary bg-clip-text text-transparent">IntelliMeet</span>
           </CardTitle>
-          <p className="text-gray-600 mt-2">Join or create a video call</p>
+          <p className="text-muted-foreground mt-2">Join or create a video call</p>
         </CardHeader>
 
         <CardContent className="space-y-6">
           {/* Tab Selection */}
-          <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
+          <div className="flex space-x-1 bg-muted p-1 rounded-lg">
             <button
               onClick={() => setActiveTab("join")}
               className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
                 activeTab === "join"
-                  ? "bg-white text-blue-600 shadow-sm"
-                  : "text-gray-600 hover:text-gray-900"
+                  ? "bg-card text-ai-primary shadow-sm border border-ai-primary/20"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Users className="h-4 w-4 inline mr-1" />
@@ -104,8 +104,8 @@ const JoinCall: React.FC<JoinCallProps> = ({ onJoinCall, onError }) => {
               onClick={() => setActiveTab("create")}
               className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
                 activeTab === "create"
-                  ? "bg-white text-blue-600 shadow-sm"
-                  : "text-gray-600 hover:text-gray-900"
+                  ? "bg-card text-ai-primary shadow-sm border border-ai-primary/20"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Plus className="h-4 w-4 inline mr-1" />
@@ -196,13 +196,13 @@ const JoinCall: React.FC<JoinCallProps> = ({ onJoinCall, onError }) => {
           )}
 
           {/* Features */}
-          <div className="pt-4 border-t border-gray-200">
-            <h4 className="text-sm font-medium text-gray-900 mb-2">Features:</h4>
-            <ul className="text-sm text-gray-600 space-y-1">
+          <div className="pt-4 border-t border-border">
+            <h4 className="text-sm font-medium text-foreground mb-2">Features:</h4>
+            <ul className="text-sm text-muted-foreground space-y-1">
               <li>• HD Video & Audio calling</li>
-              <li>• Screen sharing</li>
-              <li>• Multi-user support</li>
-              <li>• No downloads required</li>
+              <li>• AI-powered transcription</li>
+              <li>• Smart meeting summaries</li>
+              <li>• Real-time collaboration</li>
             </ul>
           </div>
         </CardContent>

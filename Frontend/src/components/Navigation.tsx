@@ -42,7 +42,10 @@ const Navigation = () => {
     }`}>
       <div className="container mx-auto px-6">
         <div className="flex items-center justify-between h-16">
-          <div className="flex items-center space-x-3 group">
+          <div 
+            className="flex items-center space-x-3 group cursor-pointer" 
+            onClick={() => navigate('/')}
+          >
             <div className="relative">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-ai-primary to-ai-secondary flex items-center justify-center group-hover:scale-110 transition-transform">
                 <Brain className="w-6 h-6 text-white" />

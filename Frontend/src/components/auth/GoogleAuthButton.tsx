@@ -8,11 +8,10 @@ const GoogleAuthButton: React.FC = () => {
   const navigate = useNavigate();
   const [localError, setLocalError] = useState<string>("");
 
-  // Fallback component when Google OAuth is not configured
   const GoogleLoginFallback = () => (
     <button
       disabled
-      className="w-full bg-gray-600 text-gray-400 py-3 rounded-md cursor-not-allowed flex items-center justify-center"
+      className="w-full bg-muted text-muted-foreground py-3 rounded-md cursor-not-allowed flex items-center justify-center border border-border"
     >
       <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
         <path
@@ -39,7 +38,7 @@ const GoogleAuthButton: React.FC = () => {
   return (
     <div className="w-full">
       {localError && (
-        <div className="bg-red-900/30 border border-red-500 text-red-200 p-3 rounded-md mb-4 text-sm">
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-md mb-4 text-sm">
           {localError}
         </div>
       )}

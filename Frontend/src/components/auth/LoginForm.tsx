@@ -33,7 +33,7 @@ const LoginForm: React.FC = () => {
     try {
       const { user, token } = await login(formData);
       loginUser(user, token);
-      navigate("/"); // Redirect to landing page after successful login
+      navigate("/"); 
     } catch (err: any) {
       console.error("Login error:", err);
       setFormError(err.message || "Failed to login. Please try again.");
@@ -44,19 +44,15 @@ const LoginForm: React.FC = () => {
 
   return (
     <div className="w-full">
-      <h2 className="text-2xl font-bold text-white mb-6 text-center">
-        Login to Your Account
-      </h2>
-
       {formError && (
-        <div className="bg-red-900/30 border border-red-500 text-red-200 p-4 rounded-md mb-6">
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive p-4 rounded-md mb-6">
           {formError}
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="form-group">
-          <label htmlFor="email" className="block text-gray-300 mb-2">
+          <label htmlFor="email" className="block text-foreground mb-2">
             Email
           </label>
           <input
@@ -66,19 +62,19 @@ const LoginForm: React.FC = () => {
             value={formData.email}
             onChange={handleChange}
             required
-            className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full bg-input border border-border rounded-md px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ai-primary focus:border-transparent transition-colors"
             placeholder="your.email@example.com"
           />
         </div>
 
         <div className="form-group">
           <div className="flex justify-between mb-2">
-            <label htmlFor="password" className="text-gray-300">
+            <label htmlFor="password" className="text-foreground">
               Password
             </label>
             <Link
               to="/forgot-password"
-              className="text-purple-400 hover:text-purple-300 text-sm transition-colors"
+              className="text-ai-accent hover:text-ai-primary text-sm transition-colors"
             >
               Forgot Password?
             </Link>
@@ -90,14 +86,14 @@ const LoginForm: React.FC = () => {
             value={formData.password}
             onChange={handleChange}
             required
-            className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full bg-input border border-border rounded-md px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ai-primary focus:border-transparent transition-colors"
             placeholder="••••••••"
           />
         </div>
 
         <button
           type="submit"
-          className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-md transition-colors flex items-center justify-center"
+          className="w-full bg-gradient-to-r from-ai-primary to-ai-secondary hover:from-ai-primary/90 hover:to-ai-secondary/90 text-white py-3 rounded-md transition-all duration-200 flex items-center justify-center font-medium"
           disabled={isLoading}
         >
           {isLoading ? (
@@ -130,11 +126,11 @@ const LoginForm: React.FC = () => {
         </button>
       </form>
 
-      <div className="mt-6 text-center text-gray-400">
+      <div className="mt-6 text-center text-muted-foreground">
         Don't have an account?{" "}
         <Link
           to="/register"
-          className="text-purple-400 hover:text-purple-300 transition-colors"
+          className="text-ai-accent hover:text-ai-primary transition-colors"
         >
           Register
         </Link>

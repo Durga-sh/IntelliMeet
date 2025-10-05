@@ -17,8 +17,6 @@ interface UserDocument extends Document {
   name: string;
   avatar?: string;
 }
-
-// JWT Strategy
 const jwtOptions: StrategyOptions = {
   jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
   secretOrKey: config.JWT_SECRET,
@@ -38,7 +36,6 @@ passport.use(
   })
 );
 
-// Google Strategy
 passport.use(
   new GoogleStrategy(
     {
@@ -53,11 +50,10 @@ passport.use(
       done: any
     ) => {
       try {
-        // Check if user exists
         let user = await User.findOne({ googleId: profile.id });
 
         if (!user) {
-          // Create new user
+    
           user = new User({
             googleId: profile.id,
             email: profile.emails?.[0].value,

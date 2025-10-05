@@ -5,22 +5,22 @@ import GoogleAuthButton from "../components/auth/GoogleAuthButton";
 
 const RegisterPage = () => {
   return (
-    <div className="bg-slate-900 min-h-screen flex items-center justify-center px-4 py-12">
-      <div className="bg-slate-800 rounded-xl shadow-lg p-8 w-full max-w-md">
+    <div className="bg-background min-h-[calc(100vh-160px)] flex items-center justify-center px-4 py-12">
+      <div className="bg-card rounded-xl shadow-[var(--shadow-card)] border border-border/50 p-8 w-full max-w-md backdrop-blur-sm">
         <div className="text-center mb-8">
           <Link to="/" className="inline-block">
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-500 to-violet-400 bg-clip-text text-transparent">
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-ai-primary to-ai-secondary bg-clip-text text-transparent">
               IntelliMeet
             </h1>
           </Link>
-          <p className="text-gray-400 mt-2">Create your account</p>
+          <p className="text-muted-foreground mt-2">Create your account</p>
         </div>
 
         <RegisterForm />
 
         <div className="mt-6 relative flex items-center justify-center">
-          <div className="border-t border-slate-700 absolute w-full"></div>
-          <div className="bg-slate-800 px-4 relative z-10 text-gray-400 text-sm">
+          <div className="border-t border-border absolute w-full"></div>
+          <div className="bg-card px-4 relative z-10 text-muted-foreground text-sm">
             OR
           </div>
         </div>

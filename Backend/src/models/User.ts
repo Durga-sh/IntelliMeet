@@ -1,7 +1,6 @@
 import mongoose, { Document, Schema } from "mongoose";
 import bcrypt from "bcryptjs";
 
-// Interface for User document
 export interface IUser extends Document {
   _id: mongoose.Types.ObjectId;
   name: string;
@@ -44,7 +43,6 @@ const UserSchema: Schema<IUser> = new mongoose.Schema({
   },
 });
 
-// Hash password before saving
 UserSchema.pre<IUser>("save", async function (next) {
   if (this.password && this.isModified("password")) {
     const salt = await bcrypt.genSalt(10);
@@ -53,7 +51,6 @@ UserSchema.pre<IUser>("save", async function (next) {
   next();
 });
 
-// Method to compare password
 UserSchema.methods.comparePassword = async function (
   enteredPassword: string
 ): Promise<boolean> {

@@ -1,20 +1,31 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import JoinCall from "../components/JoinCall";
 import VideoCall from "../components/VideoCall";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { AlertTriangle } from "lucide-react";
 
 const VideoCallPage: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [currentView, setCurrentView] = useState<"join" | "call">("join");
   const [roomId, setRoomId] = useState("");
   const [userName, setUserName] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(location.search);
+    if (urlParams.get("active") === "true") {
+      setCurrentView("call");
+    }
+  }, [location.search]);
 
   const handleJoinCall = (joinRoomId: string, joinUserName: string) => {
     setRoomId(joinRoomId);
     setUserName(joinUserName);
     setCurrentView("call");
     setError(null);
+    navigate(`/video-call?active=true&room=${joinRoomId}`, { replace: true });
   };
 
   const handleLeaveCall = () => {
@@ -22,17 +33,16 @@ const VideoCallPage: React.FC = () => {
     setRoomId("");
     setUserName("");
     setError(null);
+    navigate("/video-call", { replace: true });
   };
 
   const handleError = (errorMessage: string) => {
     setError(errorMessage);
-    // Clear error after 5 seconds
     setTimeout(() => setError(null), 5000);
   };
 
   return (
-    <div className="min-h-screen">
-      {/* Error Alert */}
+    <div className={currentView === "call" ? "min-h-screen" : ""}>
       {error && (
         <div className="fixed top-4 right-4 z-50 w-full max-w-md">
           <Alert variant="destructive">
@@ -41,8 +51,6 @@ const VideoCallPage: React.FC = () => {
           </Alert>
         </div>
       )}
-
-      {/* Content */}
       {currentView === "join" ? (
         <JoinCall onJoinCall={handleJoinCall} onError={handleError} />
       ) : (

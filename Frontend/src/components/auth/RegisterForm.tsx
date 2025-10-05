@@ -17,13 +17,13 @@ interface OTPFormData {
 }
 
 const RegisterForm: React.FC = () => {
-  const [step, setStep] = useState<number>(1); // 1: Registration Form, 2: OTP Verification
+  const [step, setStep] = useState<number>(1);
   const [formData, setFormData] = useState<RegisterFormData>({
     name: "",
     email: "",
     password: "",
     confirmPassword: "",
-    role: "user", // Default role
+    role: "user",
   });
   const [otpData, setOtpData] = useState<OTPFormData>({
     otp: "",
@@ -142,7 +142,7 @@ const RegisterForm: React.FC = () => {
 
       if (response.success && response.user && response.token) {
         loginUser(response.user, response.token);
-        navigate("/"); // Redirect to landing page after successful registration
+        navigate("/");
       } else {
         setFormError("Invalid response from server");
       }
@@ -179,21 +179,21 @@ const RegisterForm: React.FC = () => {
   if (step === 2) {
     return (
       <div className="w-full">
-        <h2 className="text-2xl font-bold text-white mb-6 text-center">
+        <h2 className="text-2xl font-bold bg-gradient-to-r from-ai-primary to-ai-secondary bg-clip-text text-transparent mb-6 text-center">
           Verify Your Email
         </h2>
-        <p className="text-gray-300 text-center mb-6">
-          We've sent a 6-digit OTP to <strong>{formData.email}</strong>
+        <p className="text-muted-foreground text-center mb-6">
+          We've sent a 6-digit OTP to <strong className="text-foreground">{formData.email}</strong>
         </p>
 
         {formError && (
-          <div className="bg-red-900/30 border border-red-500 text-red-200 p-4 rounded-md mb-6">
+          <div className="bg-destructive/10 border border-destructive/20 text-destructive p-4 rounded-md mb-6">
             {formError}
           </div>
         )}
 
         {successMessage && (
-          <div className="bg-green-900/30 border border-green-500 text-green-200 p-4 rounded-md mb-6">
+          <div className="bg-green-500/10 border border-green-500/20 text-green-400 p-4 rounded-md mb-6">
             {successMessage}
           </div>
         )}
@@ -202,7 +202,7 @@ const RegisterForm: React.FC = () => {
           <div className="form-group">
             <label
               htmlFor="otp"
-              className="block text-gray-300 mb-2 text-center"
+              className="block text-foreground mb-2 text-center"
             >
               Enter OTP
             </label>
@@ -214,14 +214,14 @@ const RegisterForm: React.FC = () => {
               onChange={handleOTPChange}
               required
               maxLength={6}
-              className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-3 text-white text-center text-2xl font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full bg-input border border-border rounded-md px-4 py-3 text-foreground text-center text-2xl font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-ai-primary focus:border-transparent transition-colors"
               placeholder="000000"
             />
           </div>
 
           <button
             type="submit"
-            className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-md transition-colors flex items-center justify-center"
+            className="w-full bg-gradient-to-r from-ai-primary to-ai-secondary hover:from-ai-primary/90 hover:to-ai-secondary/90 text-white py-3 rounded-md transition-all duration-200 flex items-center justify-center font-medium"
             disabled={isLoading || otpData.otp.length !== 6}
           >
             {isLoading ? (
@@ -255,7 +255,7 @@ const RegisterForm: React.FC = () => {
         </form>
 
         <div className="mt-6 text-center">
-          <p className="text-gray-400 mb-2">Didn't receive the OTP?</p>
+          <p className="text-muted-foreground mb-2">Didn't receive the OTP?</p>
           <button
             onClick={handleResendOTP}
             disabled={countdown > 0 || isLoading}
@@ -281,19 +281,15 @@ const RegisterForm: React.FC = () => {
 
   return (
     <div className="w-full">
-      <h2 className="text-2xl font-bold text-white mb-6 text-center">
-        Create an Account
-      </h2>
-
       {formError && (
-        <div className="bg-red-900/30 border border-red-500 text-red-200 p-4 rounded-md mb-6">
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive p-4 rounded-md mb-6">
           {formError}
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="form-group">
-          <label htmlFor="name" className="block text-gray-300 mb-2">
+          <label htmlFor="name" className="block text-foreground mb-2">
             Full Name
           </label>
           <input
@@ -303,13 +299,13 @@ const RegisterForm: React.FC = () => {
             value={formData.name}
             onChange={handleChange}
             required
-            className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full bg-input border border-border rounded-md px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ai-primary focus:border-transparent transition-colors"
             placeholder="John Doe"
           />
         </div>
 
         <div className="form-group">
-          <label htmlFor="email" className="block text-gray-300 mb-2">
+          <label htmlFor="email" className="block text-foreground mb-2">
             Email
           </label>
           <input
@@ -319,13 +315,13 @@ const RegisterForm: React.FC = () => {
             value={formData.email}
             onChange={handleChange}
             required
-            className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full bg-input border border-border rounded-md px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ai-primary focus:border-transparent transition-colors"
             placeholder="your.email@example.com"
           />
         </div>
 
         <div className="form-group">
-          <label htmlFor="password" className="block text-gray-300 mb-2">
+          <label htmlFor="password" className="block text-foreground mb-2">
             Password
           </label>
           <input
@@ -336,13 +332,13 @@ const RegisterForm: React.FC = () => {
             onChange={handleChange}
             required
             minLength={6}
-            className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full bg-input border border-border rounded-md px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ai-primary focus:border-transparent transition-colors"
             placeholder="••••••••"
           />
         </div>
 
         <div className="form-group">
-          <label htmlFor="confirmPassword" className="block text-gray-300 mb-2">
+          <label htmlFor="confirmPassword" className="block text-foreground mb-2">
             Confirm Password
           </label>
           <input
@@ -352,13 +348,13 @@ const RegisterForm: React.FC = () => {
             value={formData.confirmPassword}
             onChange={handleChange}
             required
-            className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full bg-input border border-border rounded-md px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ai-primary focus:border-transparent transition-colors"
             placeholder="••••••••"
           />
         </div>
 
         <div className="form-group">
-          <label htmlFor="role" className="block text-gray-300 mb-2">
+          <label htmlFor="role" className="block text-foreground mb-2">
             Role
           </label>
           <select
@@ -366,7 +362,7 @@ const RegisterForm: React.FC = () => {
             name="role"
             value={formData.role}
             onChange={handleChange}
-            className="w-full bg-slate-700 border border-slate-600 rounded-md px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full bg-input border border-border rounded-md px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ai-primary focus:border-transparent transition-colors"
           >
             <option value="user">User</option>
             <option value="admin">Admin</option>
@@ -376,7 +372,7 @@ const RegisterForm: React.FC = () => {
 
         <button
           type="submit"
-          className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-md transition-colors flex items-center justify-center"
+          className="w-full bg-gradient-to-r from-ai-primary to-ai-secondary hover:from-ai-primary/90 hover:to-ai-secondary/90 text-white py-3 rounded-md transition-all duration-200 flex items-center justify-center font-medium"
           disabled={isLoading}
         >
           {isLoading ? (
@@ -409,11 +405,11 @@ const RegisterForm: React.FC = () => {
         </button>
       </form>
 
-      <div className="mt-6 text-center text-gray-400">
+      <div className="mt-6 text-center text-muted-foreground">
         Already have an account?{" "}
         <Link
           to="/login"
-          className="text-purple-400 hover:text-purple-300 transition-colors"
+          className="text-ai-accent hover:text-ai-primary transition-colors"
         >
           Login
         </Link>
