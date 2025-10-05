@@ -1,5 +1,12 @@
 import { Server } from "socket.io";
 import { v4 as uuidv4 } from "uuid";
+import mediasoupService from "./mediasoupService";
+import recordingService from "./recordingService";
+import {
+  RtpCapabilities,
+  DtlsParameters,
+  RtpParameters,
+} from "mediasoup/node/lib/types";
 
 interface User {
   id: string;
@@ -80,28 +87,121 @@ class SocketService {
         }
       });
 
-      // Handle WebRTC signaling
-      socket.on("webrtc-signal", ({ targetUserId, signal, type }) => {
+      // Get router RTP capabilities
+      socket.on("getRouterRtpCapabilities", ({ roomId }) => {
+        try {
+          const rtpCapabilities =
+            mediasoupService.getRouterRtpCapabilities(roomId);
+          socket.emit("routerRtpCapabilities", { rtpCapabilities });
+        } catch (error) {
+          console.error("Error getting router RTP capabilities:", error);
+          socket.emit("error", {
+            message: "Failed to get router capabilities",
+          });
+        }
+      });
+
+      // Create WebRTC transport
+      socket.on("createWebRtcTransport", async ({ roomId, direction }) => {
         try {
           const user = this.users.get(socket.id);
           if (!user) return;
 
-          const room = this.rooms.get(user.roomId);
-          if (!room) return;
-
-          const targetUser = Array.from(room.users.values()).find(
-            (u) => u.id === targetUserId
+          const transportOptions = await mediasoupService.createWebRtcTransport(
+            roomId,
+            user.id,
+            direction
           );
 
-          if (targetUser) {
-            this.io.to(targetUser.socketId).emit("webrtc-signal", {
-              fromUserId: user.id,
-              signal,
-              type,
-            });
+          socket.emit("webRtcTransportCreated", {
+            direction,
+            ...transportOptions,
+          });
+        } catch (error) {
+          console.error("Error creating WebRTC transport:", error);
+          socket.emit("error", { message: "Failed to create transport" });
+        }
+      });
+
+      // Connect WebRTC transport
+      socket.on(
+        "connectWebRtcTransport",
+        async ({ transportId, dtlsParameters }) => {
+          try {
+            const user = this.users.get(socket.id);
+            if (!user) return;
+
+            await mediasoupService.connectWebRtcTransport(
+              user.id,
+              transportId,
+              dtlsParameters
+            );
+
+            socket.emit("webRtcTransportConnected", { transportId });
+          } catch (error) {
+            console.error("Error connecting WebRTC transport:", error);
+            socket.emit("error", { message: "Failed to connect transport" });
+          }
+        }
+      );
+
+      // Create producer
+      socket.on(
+        "createProducer",
+        async ({ transportId, kind, rtpParameters }) => {
+          try {
+            const user = this.users.get(socket.id);
+            if (!user) return;
+
+            const producerId = await mediasoupService.createProducer(
+              user.id,
+              transportId,
+              rtpParameters,
+              kind
+            );
+
+            socket.emit("producerCreated", { producerId, kind });
+          } catch (error) {
+            console.error("Error creating producer:", error);
+            socket.emit("error", { message: "Failed to create producer" });
+          }
+        }
+      );
+
+      // Create consumer
+      socket.on("createConsumer", async ({ producerId, rtpCapabilities }) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          const consumerData = await mediasoupService.createConsumer(
+            user.id,
+            producerId,
+            rtpCapabilities
+          );
+
+          if (consumerData) {
+            socket.emit("consumerCreated", consumerData);
+          } else {
+            socket.emit("error", { message: "Cannot consume this producer" });
           }
         } catch (error) {
-          console.error("Error handling WebRTC signal:", error);
+          console.error("Error creating consumer:", error);
+          socket.emit("error", { message: "Failed to create consumer" });
+        }
+      });
+
+      // Resume consumer
+      socket.on("resumeConsumer", async ({ consumerId }) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          await mediasoupService.resumeConsumer(user.id, consumerId);
+          socket.emit("consumerResumed", { consumerId });
+        } catch (error) {
+          console.error("Error resuming consumer:", error);
+          socket.emit("error", { message: "Failed to resume consumer" });
         }
       });
 
@@ -234,6 +334,73 @@ class SocketService {
         }
       });
 
+      // Start recording
+      socket.on("start-recording", async ({ roomId }) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user || user.roomId !== roomId) return;
+
+          const room = this.rooms.get(roomId);
+          if (!room) return;
+
+          const participants = Array.from(room.users.values()).map(
+            (u) => u.name
+          );
+          const recording = await recordingService.startRecording(
+            roomId,
+            participants
+          );
+
+          this.io.to(roomId).emit("recording-started", {
+            recordingId: recording.id,
+            startTime: recording.startTime,
+          });
+        } catch (error) {
+          console.error("Error starting recording:", error);
+          socket.emit("error", { message: "Failed to start recording" });
+        }
+      });
+
+      // Stop recording
+      socket.on("stop-recording", async ({ roomId }) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user || user.roomId !== roomId) return;
+
+          const recording = await recordingService.stopRecording(roomId);
+          if (recording) {
+            this.io.to(roomId).emit("recording-stopped", {
+              recordingId: recording.id,
+              endTime: new Date(),
+            });
+          }
+        } catch (error) {
+          console.error("Error stopping recording:", error);
+          socket.emit("error", { message: "Failed to stop recording" });
+        }
+      });
+
+      // Get recording status
+      socket.on("get-recording-status", ({ roomId }) => {
+        try {
+          const recording = recordingService.getRecording(roomId);
+          socket.emit("recording-status", {
+            recording: recording
+              ? {
+                  id: recording.id,
+                  status: recording.status,
+                  startTime: recording.startTime,
+                  endTime: recording.endTime,
+                  duration: recording.duration,
+                }
+              : null,
+          });
+        } catch (error) {
+          console.error("Error getting recording status:", error);
+          socket.emit("error", { message: "Failed to get recording status" });
+        }
+      });
+
       // Leave room
       socket.on("leave-room", () => {
         this.handleUserLeave(socket.id);
@@ -247,7 +414,7 @@ class SocketService {
     });
   }
 
-  private handleUserLeave(socketId: string) {
+  private async handleUserLeave(socketId: string) {
     try {
       const user = this.users.get(socketId);
       if (!user) return;
@@ -262,10 +429,28 @@ class SocketService {
           users: Array.from(room.users.values()),
         });
 
+        // Clean up mediasoup peer
+        await mediasoupService.removePeer(user.id);
+
         // Clean up empty rooms
         if (room.users.size === 0) {
           this.rooms.delete(user.roomId);
           console.log(`Room ${user.roomId} deleted (empty)`);
+
+          // Stop recording if active
+          const recording = recordingService.getRecording(user.roomId);
+          if (recording && recording.status === "recording") {
+            await recordingService.stopRecording(user.roomId);
+          }
+        } else {
+          // Update recording participants
+          const participants = Array.from(room.users.values()).map(
+            (u) => u.name
+          );
+          recordingService.updateRecordingParticipants(
+            user.roomId,
+            participants
+          );
         }
       }
 

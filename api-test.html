@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Test - Recording</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            background: #f5f5f5;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            background: white;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .error {
+            background: #ffe6e6;
+            border-color: #ff9999;
+            color: #cc0000;
+        }
+        .success {
+            background: #e6ffe6;
+            border-color: #99ff99;
+            color: #006600;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Recording API Test</h1>
+    <p>Test the recording API endpoints to debug the JSON parsing error.</p>
+    
+    <div class="test-section">
+        <h2>1. Test Basic API Connection</h2>
+        <button onclick="testConnection()">Test API Connection</button>
+        <div id="connectionResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>2. Test Mock Recording Status</h2>
+        <input type="text" id="roomIdInput" value="test-room-123" placeholder="Room ID">
+        <button onclick="testMockStatus()">Get Mock Status</button>
+        <div id="mockResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>3. Test Start Recording</h2>
+        <button onclick="testStartRecording()">Start Recording</button>
+        <div id="startResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>4. Test Stop Recording</h2>
+        <button onclick="testStopRecording()">Stop Recording</button>
+        <div id="stopResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>5. Test Real Status (may fail)</h2>
+        <button onclick="testRealStatus()">Get Real Status</button>
+        <div id="realResult" class="result"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/recording';
+        
+        function displayResult(elementId, data, isError = false) {
+            const element = document.getElementById(elementId);
+            element.textContent = JSON.stringify(data, null, 2);
+            element.className = isError ? 'result error' : 'result success';
+        }
+        
+        async function testConnection() {
+            try {
+                console.log('Testing connection to:', `${API_BASE}/test`);
+                const response = await fetch(`${API_BASE}/test`);
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                displayResult('connectionResult', {
+                    status: response.status,
+                    data: data
+                });
+            } catch (error) {
+                console.error('Connection test error:', error);
+                displayResult('connectionResult', {
+                    error: error.message,
+                    details: 'Check browser dev tools for more info'
+                }, true);
+            }
+        }
+        
+        async function testMockStatus() {
+            try {
+                const roomId = document.getElementById('roomIdInput').value || 'test-room-123';
+                console.log('Testing mock status for room:', roomId);
+                
+                const response = await fetch(`${API_BASE}/mock-status/${roomId}`);
+                console.log('Mock status response:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                displayResult('mockResult', data);
+            } catch (error) {
+                console.error('Mock status error:', error);
+                displayResult('mockResult', {
+                    error: error.message
+                }, true);
+            }
+        }
+        
+        async function testStartRecording() {
+            try {
+                const roomId = document.getElementById('roomIdInput').value || 'test-room-123';
+                console.log('Testing start recording for room:', roomId);
+                
+                const response = await fetch(`${API_BASE}/start/${roomId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        participants: ['user1', 'user2']
+                    })
+                });
+                
+                console.log('Start recording response:', response.status);
+                
+                const data = await response.json();
+                displayResult('startResult', data, !data.success);
+            } catch (error) {
+                console.error('Start recording error:', error);
+                displayResult('startResult', {
+                    error: error.message
+                }, true);
+            }
+        }
+        
+        async function testStopRecording() {
+            try {
+                const roomId = document.getElementById('roomIdInput').value || 'test-room-123';
+                console.log('Testing stop recording for room:', roomId);
+                
+                const response = await fetch(`${API_BASE}/stop/${roomId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                console.log('Stop recording response:', response.status);
+                
+                const data = await response.json();
+                displayResult('stopResult', data, !data.success);
+            } catch (error) {
+                console.error('Stop recording error:', error);
+                displayResult('stopResult', {
+                    error: error.message
+                }, true);
+            }
+        }
+        
+        async function testRealStatus() {
+            try {
+                const roomId = document.getElementById('roomIdInput').value || 'test-room-123';
+                console.log('Testing real status for room:', roomId);
+                
+                const response = await fetch(`${API_BASE}/status/${roomId}`);
+                console.log('Real status response:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                displayResult('realResult', data);
+            } catch (error) {
+                console.error('Real status error:', error);
+                displayResult('realResult', {
+                    error: error.message
+                }, true);
+            }
+        }
+        
+        // Auto-test connection on page load
+        window.addEventListener('load', () => {
+            console.log('Page loaded, testing connection...');
+            testConnection();
+        });
+    </script>
+</body>
+</html>

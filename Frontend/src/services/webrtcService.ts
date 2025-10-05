@@ -30,7 +30,7 @@ class WebRTCService {
   private localStream: MediaStream | null = null;
   private screenStream: MediaStream | null = null;
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
-  private options: WebRTCServiceOptions = {};
+  public options: WebRTCServiceOptions = {};
   private currentUser: User | null = null;
   private roomId: string | null = null;
 
@@ -42,6 +42,11 @@ class WebRTCService {
 
   constructor(options: WebRTCServiceOptions = {}) {
     this.options = options;
+  }
+
+  // Set options
+  public setOptions(options: WebRTCServiceOptions): void {
+    this.options = { ...this.options, ...options };
   }
 
   // Initialize connection
@@ -56,7 +61,7 @@ class WebRTCService {
       this.setupSocketListeners();
     } catch (error) {
       console.error("Failed to connect to server:", error);
-      this.options.onError?.(error);
+      this.options?.onError?.(error);
     }
   }
 
@@ -75,13 +80,13 @@ class WebRTCService {
       console.log("User media obtained:", this.localStream);
 
       // Join the room
-      this.socket.emit("join-room", {
+      this.socket?.emit("join-room", {
         roomId,
         user: { name: userName },
       });
     } catch (error) {
       console.error("Failed to join room:", error);
-      this.options.onError?.(error);
+      this.options?.onError?.(error);
       throw error;
     }
   }
@@ -114,7 +119,7 @@ class WebRTCService {
       return this.localStream;
     } catch (error) {
       console.error("Failed to get user media:", error);
-      this.options.onError?.(error);
+      this.options?.onError?.(error);
       throw error;
     }
   }
@@ -148,7 +153,7 @@ class WebRTCService {
       return this.screenStream;
     } catch (error) {
       console.error("Failed to start screen share:", error);
-      this.options.onError?.(error);
+      this.options?.onError?.(error);
       throw error;
     }
   }
@@ -178,7 +183,7 @@ class WebRTCService {
       this.socket?.emit("toggle-screen-share", { isScreenSharing: false });
     } catch (error) {
       console.error("Failed to stop screen share:", error);
-      this.options.onError?.(error);
+      this.options?.onError?.(error);
     }
   }
 
@@ -252,7 +257,7 @@ class WebRTCService {
       this.roomId = roomId;
 
       // Notify about room joined with all users
-      this.options.onRoomJoined?.(roomId, userId, users);
+      this.options?.onRoomJoined?.(roomId, userId, users);
 
       // Create peer connections for existing users (new user initiates)
       const existingUsers = users.filter((user: User) => user.id !== userId);
@@ -264,14 +269,14 @@ class WebRTCService {
 
     this.socket.on("user-joined", ({ user }) => {
       console.log("User joined:", user);
-      this.options.onUserJoined?.(user);
+      this.options?.onUserJoined?.(user);
       // Existing user creates peer connection for new user (new user will initiate)
       this.createPeerConnection(user.id, false);
     });
 
     this.socket.on("user-left", ({ userId }) => {
       console.log("User left:", userId);
-      this.options.onUserLeft?.(userId);
+      this.options?.onUserLeft?.(userId);
       this.closePeerConnection(userId);
     });
 
@@ -355,23 +360,23 @@ class WebRTCService {
     );
 
     this.socket.on("user-video-toggled", ({ userId, isVideoEnabled }) => {
-      this.options.onUserVideoToggled?.(userId, isVideoEnabled);
+      this.options?.onUserVideoToggled?.(userId, isVideoEnabled);
     });
 
     this.socket.on("user-audio-toggled", ({ userId, isAudioEnabled }) => {
-      this.options.onUserAudioToggled?.(userId, isAudioEnabled);
+      this.options?.onUserAudioToggled?.(userId, isAudioEnabled);
     });
 
     this.socket.on(
       "user-screen-share-toggled",
       ({ userId, isScreenSharing }) => {
-        this.options.onUserScreenShareToggled?.(userId, isScreenSharing);
+        this.options?.onUserScreenShareToggled?.(userId, isScreenSharing);
       }
     );
 
     this.socket.on("error", (error) => {
       console.error("Socket error:", error);
-      this.options.onError?.(error);
+      this.options?.onError?.(error);
     });
   }
 
@@ -407,7 +412,7 @@ class WebRTCService {
       // Handle remote stream
       peerConnection.ontrack = (event) => {
         console.log("Received remote stream from:", userId, event.streams[0]);
-        this.options.onRemoteStream?.(userId, event.streams[0]);
+        this.options?.onRemoteStream?.(userId, event.streams[0]);
       };
 
       // Handle ICE candidates
@@ -468,7 +473,7 @@ class WebRTCService {
       }
     } catch (error) {
       console.error(`Failed to create peer connection for ${userId}:`, error);
-      this.options.onError?.(error);
+      this.options?.onError?.(error);
     }
   }
 

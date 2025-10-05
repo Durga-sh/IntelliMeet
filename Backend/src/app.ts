@@ -7,6 +7,7 @@ import path from "path";
 // Import routes
 import authRoutes from "./routes/auth";
 import videoCallRoutes from "./routes/videoCall";
+import recordingRoutes from "./routes/recording";
 
 // Initialize app
 const app: Application = express();
@@ -31,6 +32,7 @@ require("./config/passport");
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/video", videoCallRoutes);
+app.use("/api/recordings", recordingRoutes);
 
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {

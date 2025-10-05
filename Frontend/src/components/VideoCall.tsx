@@ -11,9 +11,13 @@ import {
   Phone, 
   PhoneOff,
   Users,
-  Settings
+  Settings,
+  Play,
+  Square
 } from "lucide-react";
 import WebRTCService, { User } from ".././services/webrtcService";
+import RecordingStatusChecker from "./RecordingStatusChecker";
+import RecordingIndicator from "./RecordingIndicator";
 
 interface VideoCallProps {
   roomId: string;
@@ -36,6 +40,11 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
   const [users, setUsers] = useState<User[]>([]);
   const [remoteVideos, setRemoteVideos] = useState<RemoteVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  
+  // Recording states
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingStatus, setRecordingStatus] = useState<string>('not-started');
+  const [recordingError, setRecordingError] = useState<string | null>(null);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
@@ -44,7 +53,7 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
     const initializeCall = async () => {
       try {
         // Configure WebRTC service callbacks
-        webrtcService.options = {
+        webrtcService.setOptions({
           onRoomJoined: (_roomId: string, currentUserId: string, allUsers: User[]) => {
             console.log("Room joined. All users:", allUsers);
             // Set all users except current user
@@ -96,7 +105,7 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
             console.error("WebRTC Error:", err);
             setError(err.message || "An error occurred");
           }
-        };
+        });
 
         // Connect to server
         console.log("Connecting to server...");
@@ -176,6 +185,107 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
     }
   };
 
+  // Recording functions
+  const startRecording = async () => {
+    try {
+      setRecordingError(null);
+      const participants = users.map(u => u.id);
+      
+      const response = await fetch(`/api/recording/start/${roomId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ participants })
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        setIsRecording(true);
+        setRecordingStatus('recording');
+        console.log('Recording started:', data.data);
+      } else {
+        setRecordingError(data.message || 'Failed to start recording');
+      }
+    } catch (error: any) {
+      setRecordingError(error.message || 'Failed to start recording');
+      console.error('Recording start error:', error);
+    }
+  };
+
+  const stopRecording = async () => {
+    try {
+      setRecordingError(null);
+      
+      const response = await fetch(`/api/recording/stop/${roomId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        setIsRecording(false);
+        setRecordingStatus('processing');
+        console.log('Recording stopped:', data.data);
+        
+        // Start checking status
+        checkRecordingStatus();
+      } else {
+        setRecordingError(data.message || 'Failed to stop recording');
+      }
+    } catch (error: any) {
+      setRecordingError(error.message || 'Failed to stop recording');
+      console.error('Recording stop error:', error);
+    }
+  };
+
+  const checkRecordingStatus = async () => {
+    try {
+      // Use mock endpoint for testing
+      const response = await fetch(`/api/recording/mock-status/${roomId}`);
+
+      const data = await response.json();
+      
+      if (data.success) {
+        const { progress, storage } = data.data;
+        
+        if (progress.isRecording) {
+          setRecordingStatus('recording');
+          setIsRecording(true);
+        } else if (progress.isProcessing) {
+          setRecordingStatus('processing');
+          setIsRecording(false);
+        } else if (progress.isCompleted && storage.isStored) {
+          setRecordingStatus('completed');
+          setIsRecording(false);
+        } else if (progress.isFailed) {
+          setRecordingStatus('failed');
+          setIsRecording(false);
+        }
+        
+        console.log('Recording status:', data.data);
+      }
+    } catch (error: any) {
+      console.error('Status check error:', error);
+    }
+  };
+
+  // Check recording status on component mount and periodically
+  useEffect(() => {
+    if (roomId) {
+      checkRecordingStatus();
+      
+      // Check status every 5 seconds
+      const interval = setInterval(checkRecordingStatus, 5000);
+      return () => clearInterval(interval);
+    }
+    return undefined;
+  }, [roomId]);
+
   const handleLeaveCall = () => {
     webrtcService.leaveRoom();
     onLeaveCall();
@@ -217,10 +327,19 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
     <div className="flex flex-col h-screen bg-gray-900 text-white">
       {/* Header */}
       <div className="flex items-center justify-between p-4 bg-gray-800">
-        <div className="flex items-center space-x-2">
-          <Users className="h-5 w-5" />
-          <span>Room: {roomId.substring(0, 8)}</span>
-          <span className="text-gray-400">({users.length + 1} participants)</span>
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <Users className="h-5 w-5" />
+            <span>Room: {roomId.substring(0, 8)}</span>
+            <span className="text-gray-400">({users.length + 1} participants)</span>
+          </div>
+          
+          {/* Recording Status Indicator */}
+          <RecordingIndicator 
+            roomId={roomId}
+            isRecording={isRecording}
+            recordingStatus={recordingStatus}
+          />
         </div>
         <div className="flex items-center space-x-2">
           <Button variant="ghost" size="sm">
@@ -311,6 +430,29 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
           {isScreenSharing ? <MonitorOff className="h-6 w-6" /> : <Monitor className="h-6 w-6" />}
         </Button>
 
+        {/* Recording Controls */}
+        {!isRecording ? (
+          <Button
+            onClick={startRecording}
+            variant="outline"
+            size="lg"
+            className="rounded-full p-3 border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
+            title="Start Recording"
+          >
+            <Play className="h-6 w-6" />
+          </Button>
+        ) : (
+          <Button
+            onClick={stopRecording}
+            variant="destructive"
+            size="lg"
+            className="rounded-full p-3 animate-pulse"
+            title="Stop Recording"
+          >
+            <Square className="h-6 w-6" />
+          </Button>
+        )}
+
         <Button
           onClick={handleLeaveCall}
           variant="destructive"
@@ -319,6 +461,26 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
         >
           <PhoneOff className="h-6 w-6" />
         </Button>
+      </div>
+
+      {/* Recording Error Display */}
+      {recordingError && (
+        <div className="px-4 py-2 bg-red-900 border-t border-red-700">
+          <div className="text-red-200 text-sm">
+            Recording Error: {recordingError}
+            <button 
+              onClick={() => setRecordingError(null)}
+              className="ml-2 text-red-300 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Recording Status Panel */}
+      <div className="p-4 bg-gray-100">
+        <RecordingStatusChecker roomId={roomId} />
       </div>
     </div>
   );
