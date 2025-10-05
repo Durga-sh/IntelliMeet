@@ -1,8 +1,10 @@
 import { Button } from "./ui/button";
 import { ArrowRight, Play, Brain, Users, MessageSquare, Video, Mic, Share2, Bot } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 const Hero = () => {
+  const navigate = useNavigate();
   const [activeFeature, setActiveFeature] = useState(0);
   const [typedText, setTypedText] = useState("");
   
@@ -90,9 +92,14 @@ const Hero = () => {
             </p>
             
             <div className="flex flex-col sm:flex-row gap-4">
-              <Button variant="hero" size="lg" className="group relative overflow-hidden">
+              <Button 
+                variant="hero" 
+                size="lg" 
+                className="group relative overflow-hidden"
+                onClick={() => navigate('/video-call')}
+              >
                 <div className="absolute inset-0 bg-gradient-to-r from-ai-primary to-ai-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
-                <span className="relative z-10">Experience the Future</span>
+                <span className="relative z-10">Join Room</span>
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform relative z-10" />
               </Button>
               

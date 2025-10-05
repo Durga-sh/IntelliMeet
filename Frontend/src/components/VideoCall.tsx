@@ -45,9 +45,18 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
       try {
         // Configure WebRTC service callbacks
         webrtcService.options = {
+          onRoomJoined: (_roomId: string, currentUserId: string, allUsers: User[]) => {
+            console.log("Room joined. All users:", allUsers);
+            // Set all users except current user
+            const otherUsers = allUsers.filter(u => u.id !== currentUserId);
+            setUsers(otherUsers);
+          },
           onUserJoined: (user: User) => {
             console.log("User joined:", user);
-            setUsers(prev => [...prev.filter(u => u.id !== user.id), user]);
+            setUsers(prev => {
+              const filtered = prev.filter(u => u.id !== user.id);
+              return [...filtered, user];
+            });
           },
           onUserLeft: (userId: string) => {
             console.log("User left:", userId);

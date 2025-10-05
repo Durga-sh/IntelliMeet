@@ -97,11 +97,15 @@ const Navigation = () => {
                   <div className="absolute inset-0 bg-gradient-to-r from-ai-primary/10 to-ai-secondary/10 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg" />
                 </Button>
                 
-                <Button variant="ai" className="relative group overflow-hidden">
+                <Button 
+                  variant="ai" 
+                  className="relative group overflow-hidden"
+                  onClick={() => navigate('/video-call')}
+                >
                   <div className="absolute inset-0 bg-gradient-to-r from-ai-primary to-ai-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
                   <span className="relative z-10 flex items-center space-x-2">
                     <Zap className="w-4 h-4" />
-                    <span>Start Building</span>
+                    <span>Join Room</span>
                   </span>
                 </Button>
               </>
@@ -150,9 +154,13 @@ const Navigation = () => {
                 ) : (
                   <>
                     <Button variant="ghost" className="w-full" onClick={handleSignInClick}>Sign In</Button>
-                    <Button variant="ai" className="w-full">
+                    <Button 
+                      variant="ai" 
+                      className="w-full"
+                      onClick={() => navigate('/video-call')}
+                    >
                       <Zap className="w-4 h-4 mr-2" />
-                      Start Building
+                      Join Room
                     </Button>
                   </>
                 )}

@@ -11,6 +11,11 @@ export interface User {
 }
 
 export interface WebRTCServiceOptions {
+  onRoomJoined?: (
+    roomId: string,
+    currentUserId: string,
+    allUsers: User[]
+  ) => void;
   onUserJoined?: (user: User) => void;
   onUserLeft?: (userId: string) => void;
   onUserVideoToggled?: (userId: string, isVideoEnabled: boolean) => void;
@@ -244,54 +249,107 @@ class WebRTCService {
     this.socket.on("joined-room", ({ roomId, userId, users }) => {
       console.log("Joined room:", roomId);
       this.currentUser = users.find((u: User) => u.id === userId);
+      this.roomId = roomId;
 
-      // Create peer connections for existing users
-      users.forEach((user: User) => {
-        if (user.id !== userId) {
-          this.createPeerConnection(user.id, true);
-        }
+      // Notify about room joined with all users
+      this.options.onRoomJoined?.(roomId, userId, users);
+
+      // Create peer connections for existing users (new user initiates)
+      const existingUsers = users.filter((user: User) => user.id !== userId);
+      existingUsers.forEach((user: User) => {
+        console.log("Creating peer connection for existing user:", user.id);
+        this.createPeerConnection(user.id, true);
       });
     });
 
-    this.socket.on("user-joined", ({ user, users }) => {
+    this.socket.on("user-joined", ({ user }) => {
       console.log("User joined:", user);
       this.options.onUserJoined?.(user);
+      // Existing user creates peer connection for new user (new user will initiate)
       this.createPeerConnection(user.id, false);
     });
 
-    this.socket.on("user-left", ({ userId, users }) => {
+    this.socket.on("user-left", ({ userId }) => {
       console.log("User left:", userId);
       this.options.onUserLeft?.(userId);
       this.closePeerConnection(userId);
     });
 
     this.socket.on("webrtc-offer", async ({ fromUserId, offer }) => {
-      const peerConnection = this.peerConnections.get(fromUserId);
-      if (peerConnection) {
-        await peerConnection.setRemoteDescription(offer);
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
+      try {
+        console.log(`Received offer from ${fromUserId}`);
+        const peerConnection = this.peerConnections.get(fromUserId);
+        if (peerConnection) {
+          await peerConnection.setRemoteDescription(offer);
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
 
-        this.socket?.emit("webrtc-answer", {
-          targetUserId: fromUserId,
-          answer,
-        });
+          console.log(`Sending answer to ${fromUserId}`);
+          this.socket?.emit("webrtc-answer", {
+            targetUserId: fromUserId,
+            answer,
+          });
+        } else {
+          console.error(
+            `No peer connection found for user ${fromUserId} when processing offer`
+          );
+        }
+      } catch (error) {
+        console.error(`Error handling offer from ${fromUserId}:`, error);
       }
     });
 
     this.socket.on("webrtc-answer", async ({ fromUserId, answer }) => {
-      const peerConnection = this.peerConnections.get(fromUserId);
-      if (peerConnection) {
-        await peerConnection.setRemoteDescription(answer);
+      try {
+        console.log(`Received answer from ${fromUserId}`);
+        const peerConnection = this.peerConnections.get(fromUserId);
+        if (peerConnection) {
+          await peerConnection.setRemoteDescription(answer);
+        } else {
+          console.error(
+            `No peer connection found for user ${fromUserId} when processing answer`
+          );
+        }
+      } catch (error) {
+        console.error(`Error handling answer from ${fromUserId}:`, error);
       }
     });
 
     this.socket.on(
       "webrtc-ice-candidate",
       async ({ fromUserId, candidate }) => {
-        const peerConnection = this.peerConnections.get(fromUserId);
-        if (peerConnection) {
-          await peerConnection.addIceCandidate(candidate);
+        try {
+          console.log(`Received ICE candidate from ${fromUserId}`);
+          const peerConnection = this.peerConnections.get(fromUserId);
+          if (peerConnection && peerConnection.remoteDescription) {
+            await peerConnection.addIceCandidate(candidate);
+          } else if (peerConnection) {
+            // Queue the candidate if remote description isn't set yet
+            console.log(
+              `Queueing ICE candidate from ${fromUserId} (remote description not ready)`
+            );
+            setTimeout(async () => {
+              try {
+                if (peerConnection.remoteDescription) {
+                  await peerConnection.addIceCandidate(candidate);
+                }
+              } catch (delayedError) {
+                console.error(
+                  `Error adding delayed ICE candidate from ${fromUserId}:`,
+                  delayedError
+                );
+              }
+            }, 100);
+          } else {
+            console.error(
+              `No peer connection found for user ${fromUserId} when processing ICE candidate`
+            );
+          }
+        } catch (error) {
+          console.error(
+            `Error handling ICE candidate from ${fromUserId}:`,
+            error
+          );
         }
       }
     );
@@ -323,6 +381,10 @@ class WebRTCService {
     shouldCreateOffer: boolean
   ): Promise<void> {
     try {
+      console.log(
+        `Creating peer connection for user ${userId}, shouldCreateOffer: ${shouldCreateOffer}`
+      );
+
       const peerConnection = new RTCPeerConnection({
         iceServers: this.iceServers,
       });
@@ -330,19 +392,28 @@ class WebRTCService {
       // Add local stream
       if (this.localStream) {
         this.localStream.getTracks().forEach((track) => {
+          console.log(
+            `Adding track to peer connection for ${userId}:`,
+            track.kind
+          );
           peerConnection.addTrack(track, this.localStream!);
         });
+      } else {
+        console.warn(
+          `No local stream available when creating peer connection for ${userId}`
+        );
       }
 
       // Handle remote stream
       peerConnection.ontrack = (event) => {
-        console.log("Received remote stream from:", userId);
+        console.log("Received remote stream from:", userId, event.streams[0]);
         this.options.onRemoteStream?.(userId, event.streams[0]);
       };
 
       // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
+          console.log(`Sending ICE candidate to ${userId}:`, event.candidate);
           this.socket?.emit("webrtc-ice-candidate", {
             targetUserId: userId,
             candidate: event.candidate,
@@ -350,20 +421,53 @@ class WebRTCService {
         }
       };
 
+      // Handle connection state changes
+      peerConnection.onconnectionstatechange = () => {
+        console.log(
+          `Connection state with ${userId}:`,
+          peerConnection.connectionState
+        );
+        if (peerConnection.connectionState === "failed") {
+          console.error(
+            `Connection failed with ${userId}, attempting to restart ICE`
+          );
+          peerConnection.restartIce();
+        }
+      };
+
+      // Handle ICE connection state changes
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log(
+          `ICE connection state with ${userId}:`,
+          peerConnection.iceConnectionState
+        );
+      };
+
       this.peerConnections.set(userId, peerConnection);
 
-      // Create offer if needed
+      // Create offer if needed with a small delay to ensure both peers are ready
       if (shouldCreateOffer) {
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
+        setTimeout(async () => {
+          try {
+            console.log(`Creating offer for user ${userId}`);
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
 
-        this.socket?.emit("webrtc-offer", {
-          targetUserId: userId,
-          offer,
-        });
+            console.log(`Sending offer to user ${userId}`);
+            this.socket?.emit("webrtc-offer", {
+              targetUserId: userId,
+              offer,
+            });
+          } catch (offerError) {
+            console.error(
+              `Failed to create/send offer to ${userId}:`,
+              offerError
+            );
+          }
+        }, 100); // Small delay to ensure signaling is ready
       }
     } catch (error) {
-      console.error("Failed to create peer connection:", error);
+      console.error(`Failed to create peer connection for ${userId}:`, error);
       this.options.onError?.(error);
     }
   }
