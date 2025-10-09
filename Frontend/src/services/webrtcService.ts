@@ -49,6 +49,11 @@ class WebRTCService {
     this.options = { ...this.options, ...options };
   }
 
+  // Get socket (for chat service)
+  public getSocket(): Socket | null {
+    return this.socket;
+  }
+
   // Initialize connection
   public async connect(
     serverUrl: string = "http://localhost:5000"

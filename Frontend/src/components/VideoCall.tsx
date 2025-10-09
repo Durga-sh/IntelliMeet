@@ -18,6 +18,8 @@ import {
 import WebRTCService, { User } from ".././services/webrtcService";
 import RecordingStatusChecker from "./RecordingStatusChecker";
 import RecordingIndicator from "./RecordingIndicator";
+import ChatComponent from "./ChatComponent";
+import ChatButton from "./ChatButton";
 
 interface VideoCallProps {
   roomId: string;
@@ -46,6 +48,10 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
   const [recordingStatus, setRecordingStatus] = useState<string>('not-started');
   const [recordingError, setRecordingError] = useState<string | null>(null);
 
+  // Chat states
+  const [isChatVisible, setIsChatVisible] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string>("");
+
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
 
@@ -54,10 +60,11 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
       try {
         // Configure WebRTC service callbacks
         webrtcService.setOptions({
-          onRoomJoined: (_roomId: string, currentUserId: string, allUsers: User[]) => {
+          onRoomJoined: (_roomId: string, userId: string, allUsers: User[]) => {
             console.log("Room joined. All users:", allUsers);
+            setCurrentUserId(userId);
             // Set all users except current user
-            const otherUsers = allUsers.filter(u => u.id !== currentUserId);
+            const otherUsers = allUsers.filter(u => u.id !== userId);
             setUsers(otherUsers);
           },
           onUserJoined: (user: User) => {
@@ -453,6 +460,11 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
           </Button>
         )}
 
+        <ChatButton
+          onClick={() => setIsChatVisible(!isChatVisible)}
+          isActive={isChatVisible}
+        />
+
         <Button
           onClick={handleLeaveCall}
           variant="destructive"
@@ -482,6 +494,16 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
       <div className="p-4 bg-gray-100">
         <RecordingStatusChecker roomId={roomId} />
       </div>
+
+      {/* Chat Component */}
+      <ChatComponent
+        socket={webrtcService.getSocket()}
+        currentUserId={currentUserId}
+        currentUserName={userName}
+        roomId={roomId}
+        isVisible={isChatVisible}
+        onToggle={() => setIsChatVisible(!isChatVisible)}
+      />
     </div>
   );
 };

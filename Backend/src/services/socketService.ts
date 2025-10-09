@@ -2,6 +2,7 @@ import { Server } from "socket.io";
 import { v4 as uuidv4 } from "uuid";
 import mediasoupService from "./mediasoupService";
 import recordingService from "./recordingService";
+import chatService from "./chatService";
 import {
   RtpCapabilities,
   DtlsParameters,
@@ -401,6 +402,262 @@ class SocketService {
         }
       });
 
+      // ========== CHAT FUNCTIONALITY ==========
+
+      // Send chat message
+      socket.on("chat-send-message", async (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          console.log("Chat message received:", data);
+
+          const message = await chatService.sendMessage({
+            roomId: user.roomId,
+            userId: user.id,
+            userName: user.name,
+            message: data.message,
+            messageType: data.messageType || "text",
+            replyTo: data.replyTo,
+            fileInfo: data.fileInfo,
+          });
+
+          // Broadcast message to all users in the room
+          this.io.to(user.roomId).emit("chat-message-received", {
+            message: message,
+            timestamp: new Date(),
+          });
+
+          // Mark as delivered for all users in the room except sender
+          const room = this.rooms.get(user.roomId);
+          if (room) {
+            const otherUsers = Array.from(room.users.values()).filter(
+              (u) => u.id !== user.id
+            );
+            for (const otherUser of otherUsers) {
+              await chatService.markAsDelivered(message.id, otherUser.id);
+            }
+          }
+        } catch (error) {
+          console.error("Error sending chat message:", error);
+          socket.emit("chat-error", { message: "Failed to send message" });
+        }
+      });
+
+      // Get chat history
+      socket.on("chat-get-messages", async (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          const messages = await chatService.getMessages(
+            user.roomId,
+            data.limit || 50,
+            data.before ? new Date(data.before) : undefined
+          );
+
+          socket.emit("chat-messages-history", {
+            messages,
+            roomId: user.roomId,
+          });
+        } catch (error) {
+          console.error("Error getting chat messages:", error);
+          socket.emit("chat-error", { message: "Failed to get messages" });
+        }
+      });
+
+      // Mark message as read
+      socket.on("chat-mark-read", async (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          if (Array.isArray(data.messageIds)) {
+            await chatService.markMessagesAsRead(data.messageIds, user.id);
+          } else {
+            await chatService.markAsRead(data.messageId, user.id);
+          }
+
+          // Notify other users in the room about read receipts
+          socket.to(user.roomId).emit("chat-message-read", {
+            messageId: data.messageId,
+            messageIds: data.messageIds,
+            userId: user.id,
+            userName: user.name,
+            readAt: new Date(),
+          });
+        } catch (error) {
+          console.error("Error marking message as read:", error);
+        }
+      });
+
+      // Edit message
+      socket.on("chat-edit-message", async (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          const updatedMessage = await chatService.editMessage(
+            data.messageId,
+            user.id,
+            data.newMessage
+          );
+
+          if (updatedMessage) {
+            // Broadcast edited message to all users in the room
+            this.io.to(user.roomId).emit("chat-message-edited", {
+              message: updatedMessage,
+              editedAt: new Date(),
+            });
+          } else {
+            socket.emit("chat-error", {
+              message:
+                "Failed to edit message - you can only edit your own messages",
+            });
+          }
+        } catch (error) {
+          console.error("Error editing message:", error);
+          socket.emit("chat-error", { message: "Failed to edit message" });
+        }
+      });
+
+      // Delete message
+      socket.on("chat-delete-message", async (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          const success = await chatService.deleteMessage(
+            data.messageId,
+            user.id
+          );
+
+          if (success) {
+            // Broadcast message deletion to all users in the room
+            this.io.to(user.roomId).emit("chat-message-deleted", {
+              messageId: data.messageId,
+              deletedBy: user.id,
+              deletedAt: new Date(),
+            });
+          } else {
+            socket.emit("chat-error", {
+              message:
+                "Failed to delete message - you can only delete your own messages",
+            });
+          }
+        } catch (error) {
+          console.error("Error deleting message:", error);
+          socket.emit("chat-error", { message: "Failed to delete message" });
+        }
+      });
+
+      // Add reaction to message
+      socket.on("chat-add-reaction", async (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          await chatService.addReaction(data.messageId, user.id, data.emoji);
+
+          // Broadcast reaction to all users in the room
+          this.io.to(user.roomId).emit("chat-reaction-added", {
+            messageId: data.messageId,
+            userId: user.id,
+            userName: user.name,
+            emoji: data.emoji,
+            timestamp: new Date(),
+          });
+        } catch (error) {
+          console.error("Error adding reaction:", error);
+          socket.emit("chat-error", { message: "Failed to add reaction" });
+        }
+      });
+
+      // Remove reaction from message
+      socket.on("chat-remove-reaction", async (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          await chatService.removeReaction(data.messageId, user.id);
+
+          // Broadcast reaction removal to all users in the room
+          this.io.to(user.roomId).emit("chat-reaction-removed", {
+            messageId: data.messageId,
+            userId: user.id,
+            timestamp: new Date(),
+          });
+        } catch (error) {
+          console.error("Error removing reaction:", error);
+          socket.emit("chat-error", { message: "Failed to remove reaction" });
+        }
+      });
+
+      // Typing indicator
+      socket.on("chat-typing", (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          chatService.setTyping(user.roomId, user.id, user.name, data.isTyping);
+
+          // Broadcast typing status to other users in the room (exclude sender)
+          socket.to(user.roomId).emit("chat-typing-update", {
+            userId: user.id,
+            userName: user.name,
+            isTyping: data.isTyping,
+            timestamp: new Date(),
+          });
+        } catch (error) {
+          console.error("Error handling typing:", error);
+        }
+      });
+
+      // Get unread message count
+      socket.on("chat-get-unread-count", async () => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          const unreadCount = await chatService.getUnreadCount(
+            user.roomId,
+            user.id
+          );
+
+          socket.emit("chat-unread-count", {
+            count: unreadCount,
+            roomId: user.roomId,
+          });
+        } catch (error) {
+          console.error("Error getting unread count:", error);
+        }
+      });
+
+      // Search messages
+      socket.on("chat-search-messages", async (data) => {
+        try {
+          const user = this.users.get(socket.id);
+          if (!user) return;
+
+          const messages = await chatService.searchMessages(
+            user.roomId,
+            data.searchTerm,
+            data.limit || 20
+          );
+
+          socket.emit("chat-search-results", {
+            messages,
+            searchTerm: data.searchTerm,
+            roomId: user.roomId,
+          });
+        } catch (error) {
+          console.error("Error searching messages:", error);
+          socket.emit("chat-error", { message: "Failed to search messages" });
+        }
+      });
+
+      // ========== END CHAT FUNCTIONALITY ==========
+
       // Leave room
       socket.on("leave-room", () => {
         this.handleUserLeave(socket.id);
@@ -422,6 +679,9 @@ class SocketService {
       const room = this.rooms.get(user.roomId);
       if (room) {
         room.users.delete(user.id);
+
+        // Clear typing status
+        chatService.clearUserTyping(user.roomId, user.id);
 
         // Notify other users
         this.io.to(user.roomId).emit("user-left", {
