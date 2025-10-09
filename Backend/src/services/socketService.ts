@@ -42,6 +42,16 @@ class SocketService {
       // Join a room
       socket.on("join-room", ({ roomId, user }) => {
         try {
+          if (!roomId || roomId.trim() === "") {
+            console.log("Empty room ID received from client");
+            socket.emit("error", { message: "Room ID is required" });
+            return;
+          }
+
+          console.log(
+            `Join room request - Room ID: "${roomId}", User: "${user?.name}"`
+          );
+
           const userId = uuidv4();
           const newUser: User = {
             id: userId,
@@ -402,15 +412,33 @@ class SocketService {
         }
       });
 
-      // ========== CHAT FUNCTIONALITY ==========
+      // ========== ENHANCED CHAT FUNCTIONALITY ==========
 
       // Send chat message
       socket.on("chat-send-message", async (data) => {
         try {
           const user = this.users.get(socket.id);
-          if (!user) return;
+          if (!user) {
+            socket.emit("chat-error", { message: "User not found" });
+            return;
+          }
 
-          console.log("Chat message received:", data);
+          console.log("Chat message received:", {
+            from: user.name,
+            roomId: user.roomId,
+            messageType: data.messageType || "text",
+            message: data.message,
+          });
+
+          // Validate message content
+          if (!data.message || !data.message.trim()) {
+            console.log("Empty message rejected");
+            socket.emit("chat-error", { message: "Message cannot be empty" });
+            return;
+          }
+
+          // Stop typing indicator when message is sent
+          chatService.setTyping(user.roomId, user.id, user.name, false);
 
           const message = await chatService.sendMessage({
             roomId: user.roomId,
@@ -422,10 +450,36 @@ class SocketService {
             fileInfo: data.fileInfo,
           });
 
-          // Broadcast message to all users in the room
+          // Convert to plain object for transmission
+          const messageObj = {
+            id: message.id,
+            roomId: message.roomId,
+            userId: message.userId,
+            userName: message.userName,
+            message: message.message,
+            messageType: message.messageType,
+            timestamp: message.timestamp,
+            deliveredTo: message.deliveredTo,
+            readBy: message.readBy,
+            isEdited: message.isEdited,
+            editedAt: message.editedAt,
+            replyTo: message.replyTo,
+            reactions: message.reactions,
+            fileInfo: message.fileInfo,
+          };
+
+          console.log("Broadcasting message to room:", user.roomId);
+          console.log("Message object:", messageObj);
+          console.log(
+            "Room users:",
+            Array.from(this.rooms.get(user.roomId)?.users.values() || []).map(
+              (u) => u.name
+            )
+          );
+
+          // Broadcast message to all users in the room (including sender)
           this.io.to(user.roomId).emit("chat-message-received", {
-            message: message,
-            timestamp: new Date(),
+            message: messageObj,
           });
 
           // Mark as delivered for all users in the room except sender
@@ -434,13 +488,23 @@ class SocketService {
             const otherUsers = Array.from(room.users.values()).filter(
               (u) => u.id !== user.id
             );
+
             for (const otherUser of otherUsers) {
               await chatService.markAsDelivered(message.id, otherUser.id);
             }
+
+            // Notify sender that message was delivered
+            socket.emit("chat-message-delivered", {
+              messageId: message.id,
+              deliveredCount: otherUsers.length,
+            });
           }
         } catch (error) {
           console.error("Error sending chat message:", error);
-          socket.emit("chat-error", { message: "Failed to send message" });
+          socket.emit("chat-error", {
+            message: "Failed to send message",
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
         }
       });
 
@@ -448,18 +512,29 @@ class SocketService {
       socket.on("chat-get-messages", async (data) => {
         try {
           const user = this.users.get(socket.id);
-          if (!user) return;
+          if (!user) {
+            socket.emit("chat-error", { message: "User not found" });
+            return;
+          }
+
+          const limit = data?.limit || 50;
+          const before = data?.before ? new Date(data.before) : undefined;
+
+          console.log(`Loading ${limit} messages for room ${user.roomId}`);
 
           const messages = await chatService.getMessages(
             user.roomId,
-            data.limit || 50,
-            data.before ? new Date(data.before) : undefined
+            limit,
+            before
           );
 
           socket.emit("chat-messages-history", {
             messages,
             roomId: user.roomId,
+            count: messages.length,
           });
+
+          console.log(`Sent ${messages.length} messages to ${user.name}`);
         } catch (error) {
           console.error("Error getting chat messages:", error);
           socket.emit("chat-error", { message: "Failed to get messages" });
@@ -473,19 +548,38 @@ class SocketService {
           if (!user) return;
 
           if (Array.isArray(data.messageIds)) {
-            await chatService.markMessagesAsRead(data.messageIds, user.id);
-          } else {
-            await chatService.markAsRead(data.messageId, user.id);
-          }
+            // Mark multiple messages as read
+            const count = await chatService.markMessagesAsRead(
+              data.messageIds,
+              user.id
+            );
 
-          // Notify other users in the room about read receipts
-          socket.to(user.roomId).emit("chat-message-read", {
-            messageId: data.messageId,
-            messageIds: data.messageIds,
-            userId: user.id,
-            userName: user.name,
-            readAt: new Date(),
-          });
+            if (count > 0) {
+              // Notify other users in the room about read receipts
+              socket.to(user.roomId).emit("chat-messages-read", {
+                messageIds: data.messageIds,
+                userId: user.id,
+                userName: user.name,
+                readAt: new Date(),
+                count,
+              });
+            }
+          } else if (data.messageId) {
+            // Mark single message as read
+            const success = await chatService.markAsRead(
+              data.messageId,
+              user.id
+            );
+
+            if (success) {
+              socket.to(user.roomId).emit("chat-message-read", {
+                messageId: data.messageId,
+                userId: user.id,
+                userName: user.name,
+                readAt: new Date(),
+              });
+            }
+          }
         } catch (error) {
           console.error("Error marking message as read:", error);
         }
@@ -495,7 +589,15 @@ class SocketService {
       socket.on("chat-edit-message", async (data) => {
         try {
           const user = this.users.get(socket.id);
-          if (!user) return;
+          if (!user) {
+            socket.emit("chat-error", { message: "User not found" });
+            return;
+          }
+
+          if (!data.messageId || !data.newMessage || !data.newMessage.trim()) {
+            socket.emit("chat-error", { message: "Invalid message data" });
+            return;
+          }
 
           const updatedMessage = await chatService.editMessage(
             data.messageId,
@@ -507,7 +609,7 @@ class SocketService {
             // Broadcast edited message to all users in the room
             this.io.to(user.roomId).emit("chat-message-edited", {
               message: updatedMessage,
-              editedAt: new Date(),
+              editedAt: updatedMessage.editedAt,
             });
           } else {
             socket.emit("chat-error", {
@@ -525,7 +627,15 @@ class SocketService {
       socket.on("chat-delete-message", async (data) => {
         try {
           const user = this.users.get(socket.id);
-          if (!user) return;
+          if (!user) {
+            socket.emit("chat-error", { message: "User not found" });
+            return;
+          }
+
+          if (!data.messageId) {
+            socket.emit("chat-error", { message: "Message ID required" });
+            return;
+          }
 
           const success = await chatService.deleteMessage(
             data.messageId,
@@ -557,16 +667,27 @@ class SocketService {
           const user = this.users.get(socket.id);
           if (!user) return;
 
-          await chatService.addReaction(data.messageId, user.id, data.emoji);
+          if (!data.messageId || !data.emoji) {
+            socket.emit("chat-error", { message: "Invalid reaction data" });
+            return;
+          }
 
-          // Broadcast reaction to all users in the room
-          this.io.to(user.roomId).emit("chat-reaction-added", {
-            messageId: data.messageId,
-            userId: user.id,
-            userName: user.name,
-            emoji: data.emoji,
-            timestamp: new Date(),
-          });
+          const success = await chatService.addReaction(
+            data.messageId,
+            user.id,
+            data.emoji
+          );
+
+          if (success) {
+            // Broadcast reaction to all users in the room
+            this.io.to(user.roomId).emit("chat-reaction-added", {
+              messageId: data.messageId,
+              userId: user.id,
+              userName: user.name,
+              emoji: data.emoji,
+              timestamp: new Date(),
+            });
+          }
         } catch (error) {
           console.error("Error adding reaction:", error);
           socket.emit("chat-error", { message: "Failed to add reaction" });
@@ -579,14 +700,24 @@ class SocketService {
           const user = this.users.get(socket.id);
           if (!user) return;
 
-          await chatService.removeReaction(data.messageId, user.id);
+          if (!data.messageId) {
+            socket.emit("chat-error", { message: "Message ID required" });
+            return;
+          }
 
-          // Broadcast reaction removal to all users in the room
-          this.io.to(user.roomId).emit("chat-reaction-removed", {
-            messageId: data.messageId,
-            userId: user.id,
-            timestamp: new Date(),
-          });
+          const success = await chatService.removeReaction(
+            data.messageId,
+            user.id
+          );
+
+          if (success) {
+            // Broadcast reaction removal to all users in the room
+            this.io.to(user.roomId).emit("chat-reaction-removed", {
+              messageId: data.messageId,
+              userId: user.id,
+              timestamp: new Date(),
+            });
+          }
         } catch (error) {
           console.error("Error removing reaction:", error);
           socket.emit("chat-error", { message: "Failed to remove reaction" });
@@ -599,13 +730,14 @@ class SocketService {
           const user = this.users.get(socket.id);
           if (!user) return;
 
-          chatService.setTyping(user.roomId, user.id, user.name, data.isTyping);
+          const isTyping = Boolean(data?.isTyping);
+          chatService.setTyping(user.roomId, user.id, user.name, isTyping);
 
           // Broadcast typing status to other users in the room (exclude sender)
           socket.to(user.roomId).emit("chat-typing-update", {
             userId: user.id,
             userName: user.name,
-            isTyping: data.isTyping,
+            isTyping,
             timestamp: new Date(),
           });
         } catch (error) {
@@ -630,6 +762,7 @@ class SocketService {
           });
         } catch (error) {
           console.error("Error getting unread count:", error);
+          socket.emit("chat-unread-count", { count: 0, roomId: null });
         }
       });
 
@@ -637,7 +770,19 @@ class SocketService {
       socket.on("chat-search-messages", async (data) => {
         try {
           const user = this.users.get(socket.id);
-          if (!user) return;
+          if (!user) {
+            socket.emit("chat-error", { message: "User not found" });
+            return;
+          }
+
+          if (!data?.searchTerm || !data.searchTerm.trim()) {
+            socket.emit("chat-search-results", {
+              messages: [],
+              searchTerm: "",
+              roomId: user.roomId,
+            });
+            return;
+          }
 
           const messages = await chatService.searchMessages(
             user.roomId,
@@ -649,6 +794,7 @@ class SocketService {
             messages,
             searchTerm: data.searchTerm,
             roomId: user.roomId,
+            count: messages.length,
           });
         } catch (error) {
           console.error("Error searching messages:", error);
@@ -656,7 +802,7 @@ class SocketService {
         }
       });
 
-      // ========== END CHAT FUNCTIONALITY ==========
+      // ========== END ENHANCED CHAT FUNCTIONALITY ==========
 
       // Leave room
       socket.on("leave-room", () => {

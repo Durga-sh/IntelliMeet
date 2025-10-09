@@ -1,6 +1,12 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const uuid_1 = require("uuid");
+const mediasoupService_1 = __importDefault(require("./mediasoupService"));
+const recordingService_1 = __importDefault(require("./recordingService"));
+const chatService_1 = __importDefault(require("./chatService"));
 class SocketService {
     constructor(io) {
         this.rooms = new Map();
@@ -14,6 +20,12 @@ class SocketService {
             // Join a room
             socket.on("join-room", ({ roomId, user }) => {
                 try {
+                    if (!roomId || roomId.trim() === "") {
+                        console.log("Empty room ID received from client");
+                        socket.emit("error", { message: "Room ID is required" });
+                        return;
+                    }
+                    console.log(`Join room request - Room ID: "${roomId}", User: "${user?.name}"`);
                     const userId = (0, uuid_1.v4)();
                     const newUser = {
                         id: userId,
@@ -54,26 +66,95 @@ class SocketService {
                     socket.emit("error", { message: "Failed to join room" });
                 }
             });
-            // Handle WebRTC signaling
-            socket.on("webrtc-signal", ({ targetUserId, signal, type }) => {
+            // Get router RTP capabilities
+            socket.on("getRouterRtpCapabilities", ({ roomId }) => {
+                try {
+                    const rtpCapabilities = mediasoupService_1.default.getRouterRtpCapabilities(roomId);
+                    socket.emit("routerRtpCapabilities", { rtpCapabilities });
+                }
+                catch (error) {
+                    console.error("Error getting router RTP capabilities:", error);
+                    socket.emit("error", {
+                        message: "Failed to get router capabilities",
+                    });
+                }
+            });
+            // Create WebRTC transport
+            socket.on("createWebRtcTransport", async ({ roomId, direction }) => {
                 try {
                     const user = this.users.get(socket.id);
                     if (!user)
                         return;
-                    const room = this.rooms.get(user.roomId);
-                    if (!room)
+                    const transportOptions = await mediasoupService_1.default.createWebRtcTransport(roomId, user.id, direction);
+                    socket.emit("webRtcTransportCreated", {
+                        direction,
+                        ...transportOptions,
+                    });
+                }
+                catch (error) {
+                    console.error("Error creating WebRTC transport:", error);
+                    socket.emit("error", { message: "Failed to create transport" });
+                }
+            });
+            // Connect WebRTC transport
+            socket.on("connectWebRtcTransport", async ({ transportId, dtlsParameters }) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
                         return;
-                    const targetUser = Array.from(room.users.values()).find((u) => u.id === targetUserId);
-                    if (targetUser) {
-                        this.io.to(targetUser.socketId).emit("webrtc-signal", {
-                            fromUserId: user.id,
-                            signal,
-                            type,
-                        });
+                    await mediasoupService_1.default.connectWebRtcTransport(user.id, transportId, dtlsParameters);
+                    socket.emit("webRtcTransportConnected", { transportId });
+                }
+                catch (error) {
+                    console.error("Error connecting WebRTC transport:", error);
+                    socket.emit("error", { message: "Failed to connect transport" });
+                }
+            });
+            // Create producer
+            socket.on("createProducer", async ({ transportId, kind, rtpParameters }) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
+                        return;
+                    const producerId = await mediasoupService_1.default.createProducer(user.id, transportId, rtpParameters, kind);
+                    socket.emit("producerCreated", { producerId, kind });
+                }
+                catch (error) {
+                    console.error("Error creating producer:", error);
+                    socket.emit("error", { message: "Failed to create producer" });
+                }
+            });
+            // Create consumer
+            socket.on("createConsumer", async ({ producerId, rtpCapabilities }) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
+                        return;
+                    const consumerData = await mediasoupService_1.default.createConsumer(user.id, producerId, rtpCapabilities);
+                    if (consumerData) {
+                        socket.emit("consumerCreated", consumerData);
+                    }
+                    else {
+                        socket.emit("error", { message: "Cannot consume this producer" });
                     }
                 }
                 catch (error) {
-                    console.error("Error handling WebRTC signal:", error);
+                    console.error("Error creating consumer:", error);
+                    socket.emit("error", { message: "Failed to create consumer" });
+                }
+            });
+            // Resume consumer
+            socket.on("resumeConsumer", async ({ consumerId }) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
+                        return;
+                    await mediasoupService_1.default.resumeConsumer(user.id, consumerId);
+                    socket.emit("consumerResumed", { consumerId });
+                }
+                catch (error) {
+                    console.error("Error resuming consumer:", error);
+                    socket.emit("error", { message: "Failed to resume consumer" });
                 }
             });
             // Handle offer
@@ -196,6 +277,388 @@ class SocketService {
                     console.error("Error toggling screen share:", error);
                 }
             });
+            // Start recording
+            socket.on("start-recording", async ({ roomId }) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user || user.roomId !== roomId)
+                        return;
+                    const room = this.rooms.get(roomId);
+                    if (!room)
+                        return;
+                    const participants = Array.from(room.users.values()).map((u) => u.name);
+                    const recording = await recordingService_1.default.startRecording(roomId, participants);
+                    this.io.to(roomId).emit("recording-started", {
+                        recordingId: recording.id,
+                        startTime: recording.startTime,
+                    });
+                }
+                catch (error) {
+                    console.error("Error starting recording:", error);
+                    socket.emit("error", { message: "Failed to start recording" });
+                }
+            });
+            // Stop recording
+            socket.on("stop-recording", async ({ roomId }) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user || user.roomId !== roomId)
+                        return;
+                    const recording = await recordingService_1.default.stopRecording(roomId);
+                    if (recording) {
+                        this.io.to(roomId).emit("recording-stopped", {
+                            recordingId: recording.id,
+                            endTime: new Date(),
+                        });
+                    }
+                }
+                catch (error) {
+                    console.error("Error stopping recording:", error);
+                    socket.emit("error", { message: "Failed to stop recording" });
+                }
+            });
+            // Get recording status
+            socket.on("get-recording-status", ({ roomId }) => {
+                try {
+                    const recording = recordingService_1.default.getRecording(roomId);
+                    socket.emit("recording-status", {
+                        recording: recording
+                            ? {
+                                id: recording.id,
+                                status: recording.status,
+                                startTime: recording.startTime,
+                                endTime: recording.endTime,
+                                duration: recording.duration,
+                            }
+                            : null,
+                    });
+                }
+                catch (error) {
+                    console.error("Error getting recording status:", error);
+                    socket.emit("error", { message: "Failed to get recording status" });
+                }
+            });
+            // ========== ENHANCED CHAT FUNCTIONALITY ==========
+            // Send chat message
+            socket.on("chat-send-message", async (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user) {
+                        socket.emit("chat-error", { message: "User not found" });
+                        return;
+                    }
+                    console.log("Chat message received:", {
+                        from: user.name,
+                        roomId: user.roomId,
+                        messageType: data.messageType || "text",
+                        message: data.message,
+                    });
+                    // Validate message content
+                    if (!data.message || !data.message.trim()) {
+                        console.log("Empty message rejected");
+                        socket.emit("chat-error", { message: "Message cannot be empty" });
+                        return;
+                    }
+                    // Stop typing indicator when message is sent
+                    chatService_1.default.setTyping(user.roomId, user.id, user.name, false);
+                    const message = await chatService_1.default.sendMessage({
+                        roomId: user.roomId,
+                        userId: user.id,
+                        userName: user.name,
+                        message: data.message,
+                        messageType: data.messageType || "text",
+                        replyTo: data.replyTo,
+                        fileInfo: data.fileInfo,
+                    });
+                    // Convert to plain object for transmission
+                    const messageObj = {
+                        id: message.id,
+                        roomId: message.roomId,
+                        userId: message.userId,
+                        userName: message.userName,
+                        message: message.message,
+                        messageType: message.messageType,
+                        timestamp: message.timestamp,
+                        deliveredTo: message.deliveredTo,
+                        readBy: message.readBy,
+                        isEdited: message.isEdited,
+                        editedAt: message.editedAt,
+                        replyTo: message.replyTo,
+                        reactions: message.reactions,
+                        fileInfo: message.fileInfo,
+                    };
+                    console.log("Broadcasting message to room:", user.roomId);
+                    console.log("Message object:", messageObj);
+                    console.log("Room users:", Array.from(this.rooms.get(user.roomId)?.users.values() || []).map((u) => u.name));
+                    // Broadcast message to all users in the room (including sender)
+                    this.io.to(user.roomId).emit("chat-message-received", {
+                        message: messageObj,
+                    });
+                    // Mark as delivered for all users in the room except sender
+                    const room = this.rooms.get(user.roomId);
+                    if (room) {
+                        const otherUsers = Array.from(room.users.values()).filter((u) => u.id !== user.id);
+                        for (const otherUser of otherUsers) {
+                            await chatService_1.default.markAsDelivered(message.id, otherUser.id);
+                        }
+                        // Notify sender that message was delivered
+                        socket.emit("chat-message-delivered", {
+                            messageId: message.id,
+                            deliveredCount: otherUsers.length,
+                        });
+                    }
+                }
+                catch (error) {
+                    console.error("Error sending chat message:", error);
+                    socket.emit("chat-error", {
+                        message: "Failed to send message",
+                        error: error instanceof Error ? error.message : "Unknown error",
+                    });
+                }
+            });
+            // Get chat history
+            socket.on("chat-get-messages", async (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user) {
+                        socket.emit("chat-error", { message: "User not found" });
+                        return;
+                    }
+                    const limit = data?.limit || 50;
+                    const before = data?.before ? new Date(data.before) : undefined;
+                    console.log(`Loading ${limit} messages for room ${user.roomId}`);
+                    const messages = await chatService_1.default.getMessages(user.roomId, limit, before);
+                    socket.emit("chat-messages-history", {
+                        messages,
+                        roomId: user.roomId,
+                        count: messages.length,
+                    });
+                    console.log(`Sent ${messages.length} messages to ${user.name}`);
+                }
+                catch (error) {
+                    console.error("Error getting chat messages:", error);
+                    socket.emit("chat-error", { message: "Failed to get messages" });
+                }
+            });
+            // Mark message as read
+            socket.on("chat-mark-read", async (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
+                        return;
+                    if (Array.isArray(data.messageIds)) {
+                        // Mark multiple messages as read
+                        const count = await chatService_1.default.markMessagesAsRead(data.messageIds, user.id);
+                        if (count > 0) {
+                            // Notify other users in the room about read receipts
+                            socket.to(user.roomId).emit("chat-messages-read", {
+                                messageIds: data.messageIds,
+                                userId: user.id,
+                                userName: user.name,
+                                readAt: new Date(),
+                                count,
+                            });
+                        }
+                    }
+                    else if (data.messageId) {
+                        // Mark single message as read
+                        const success = await chatService_1.default.markAsRead(data.messageId, user.id);
+                        if (success) {
+                            socket.to(user.roomId).emit("chat-message-read", {
+                                messageId: data.messageId,
+                                userId: user.id,
+                                userName: user.name,
+                                readAt: new Date(),
+                            });
+                        }
+                    }
+                }
+                catch (error) {
+                    console.error("Error marking message as read:", error);
+                }
+            });
+            // Edit message
+            socket.on("chat-edit-message", async (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user) {
+                        socket.emit("chat-error", { message: "User not found" });
+                        return;
+                    }
+                    if (!data.messageId || !data.newMessage || !data.newMessage.trim()) {
+                        socket.emit("chat-error", { message: "Invalid message data" });
+                        return;
+                    }
+                    const updatedMessage = await chatService_1.default.editMessage(data.messageId, user.id, data.newMessage);
+                    if (updatedMessage) {
+                        // Broadcast edited message to all users in the room
+                        this.io.to(user.roomId).emit("chat-message-edited", {
+                            message: updatedMessage,
+                            editedAt: updatedMessage.editedAt,
+                        });
+                    }
+                    else {
+                        socket.emit("chat-error", {
+                            message: "Failed to edit message - you can only edit your own messages",
+                        });
+                    }
+                }
+                catch (error) {
+                    console.error("Error editing message:", error);
+                    socket.emit("chat-error", { message: "Failed to edit message" });
+                }
+            });
+            // Delete message
+            socket.on("chat-delete-message", async (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user) {
+                        socket.emit("chat-error", { message: "User not found" });
+                        return;
+                    }
+                    if (!data.messageId) {
+                        socket.emit("chat-error", { message: "Message ID required" });
+                        return;
+                    }
+                    const success = await chatService_1.default.deleteMessage(data.messageId, user.id);
+                    if (success) {
+                        // Broadcast message deletion to all users in the room
+                        this.io.to(user.roomId).emit("chat-message-deleted", {
+                            messageId: data.messageId,
+                            deletedBy: user.id,
+                            deletedAt: new Date(),
+                        });
+                    }
+                    else {
+                        socket.emit("chat-error", {
+                            message: "Failed to delete message - you can only delete your own messages",
+                        });
+                    }
+                }
+                catch (error) {
+                    console.error("Error deleting message:", error);
+                    socket.emit("chat-error", { message: "Failed to delete message" });
+                }
+            });
+            // Add reaction to message
+            socket.on("chat-add-reaction", async (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
+                        return;
+                    if (!data.messageId || !data.emoji) {
+                        socket.emit("chat-error", { message: "Invalid reaction data" });
+                        return;
+                    }
+                    const success = await chatService_1.default.addReaction(data.messageId, user.id, data.emoji);
+                    if (success) {
+                        // Broadcast reaction to all users in the room
+                        this.io.to(user.roomId).emit("chat-reaction-added", {
+                            messageId: data.messageId,
+                            userId: user.id,
+                            userName: user.name,
+                            emoji: data.emoji,
+                            timestamp: new Date(),
+                        });
+                    }
+                }
+                catch (error) {
+                    console.error("Error adding reaction:", error);
+                    socket.emit("chat-error", { message: "Failed to add reaction" });
+                }
+            });
+            // Remove reaction from message
+            socket.on("chat-remove-reaction", async (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
+                        return;
+                    if (!data.messageId) {
+                        socket.emit("chat-error", { message: "Message ID required" });
+                        return;
+                    }
+                    const success = await chatService_1.default.removeReaction(data.messageId, user.id);
+                    if (success) {
+                        // Broadcast reaction removal to all users in the room
+                        this.io.to(user.roomId).emit("chat-reaction-removed", {
+                            messageId: data.messageId,
+                            userId: user.id,
+                            timestamp: new Date(),
+                        });
+                    }
+                }
+                catch (error) {
+                    console.error("Error removing reaction:", error);
+                    socket.emit("chat-error", { message: "Failed to remove reaction" });
+                }
+            });
+            // Typing indicator
+            socket.on("chat-typing", (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
+                        return;
+                    const isTyping = Boolean(data?.isTyping);
+                    chatService_1.default.setTyping(user.roomId, user.id, user.name, isTyping);
+                    // Broadcast typing status to other users in the room (exclude sender)
+                    socket.to(user.roomId).emit("chat-typing-update", {
+                        userId: user.id,
+                        userName: user.name,
+                        isTyping,
+                        timestamp: new Date(),
+                    });
+                }
+                catch (error) {
+                    console.error("Error handling typing:", error);
+                }
+            });
+            // Get unread message count
+            socket.on("chat-get-unread-count", async () => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user)
+                        return;
+                    const unreadCount = await chatService_1.default.getUnreadCount(user.roomId, user.id);
+                    socket.emit("chat-unread-count", {
+                        count: unreadCount,
+                        roomId: user.roomId,
+                    });
+                }
+                catch (error) {
+                    console.error("Error getting unread count:", error);
+                    socket.emit("chat-unread-count", { count: 0, roomId: null });
+                }
+            });
+            // Search messages
+            socket.on("chat-search-messages", async (data) => {
+                try {
+                    const user = this.users.get(socket.id);
+                    if (!user) {
+                        socket.emit("chat-error", { message: "User not found" });
+                        return;
+                    }
+                    if (!data?.searchTerm || !data.searchTerm.trim()) {
+                        socket.emit("chat-search-results", {
+                            messages: [],
+                            searchTerm: "",
+                            roomId: user.roomId,
+                        });
+                        return;
+                    }
+                    const messages = await chatService_1.default.searchMessages(user.roomId, data.searchTerm, data.limit || 20);
+                    socket.emit("chat-search-results", {
+                        messages,
+                        searchTerm: data.searchTerm,
+                        roomId: user.roomId,
+                        count: messages.length,
+                    });
+                }
+                catch (error) {
+                    console.error("Error searching messages:", error);
+                    socket.emit("chat-error", { message: "Failed to search messages" });
+                }
+            });
+            // ========== END ENHANCED CHAT FUNCTIONALITY ==========
             // Leave room
             socket.on("leave-room", () => {
                 this.handleUserLeave(socket.id);
@@ -207,7 +670,7 @@ class SocketService {
             });
         });
     }
-    handleUserLeave(socketId) {
+    async handleUserLeave(socketId) {
         try {
             const user = this.users.get(socketId);
             if (!user)
@@ -215,15 +678,29 @@ class SocketService {
             const room = this.rooms.get(user.roomId);
             if (room) {
                 room.users.delete(user.id);
+                // Clear typing status
+                chatService_1.default.clearUserTyping(user.roomId, user.id);
                 // Notify other users
                 this.io.to(user.roomId).emit("user-left", {
                     userId: user.id,
                     users: Array.from(room.users.values()),
                 });
+                // Clean up mediasoup peer
+                await mediasoupService_1.default.removePeer(user.id);
                 // Clean up empty rooms
                 if (room.users.size === 0) {
                     this.rooms.delete(user.roomId);
                     console.log(`Room ${user.roomId} deleted (empty)`);
+                    // Stop recording if active
+                    const recording = recordingService_1.default.getRecording(user.roomId);
+                    if (recording && recording.status === "recording") {
+                        await recordingService_1.default.stopRecording(user.roomId);
+                    }
+                }
+                else {
+                    // Update recording participants
+                    const participants = Array.from(room.users.values()).map((u) => u.name);
+                    recordingService_1.default.updateRecordingParticipants(user.roomId, participants);
                 }
             }
             this.users.delete(socketId);

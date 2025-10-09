@@ -11,7 +11,6 @@ const passport_jwt_1 = require("passport-jwt");
 const User_1 = __importDefault(require("../models/User"));
 const config_1 = __importDefault(require("./config"));
 const google_auth_library_1 = require("google-auth-library");
-// JWT Strategy
 const jwtOptions = {
     jwtFromRequest: passport_jwt_1.ExtractJwt.fromAuthHeaderAsBearerToken(),
     secretOrKey: config_1.default.JWT_SECRET,
@@ -28,17 +27,14 @@ passport_1.default.use(new passport_jwt_1.Strategy(jwtOptions, async (payload, d
         return done(error, false);
     }
 }));
-// Google Strategy
 passport_1.default.use(new passport_google_oauth20_1.Strategy({
     clientID: config_1.default.GOOGLE_CLIENT_ID,
     clientSecret: config_1.default.GOOGLE_CLIENT_SECRET,
     callbackURL: config_1.default.GOOGLE_CALLBACK_URL,
 }, async (accessToken, refreshToken, profile, done) => {
     try {
-        // Check if user exists
         let user = await User_1.default.findOne({ googleId: profile.id });
         if (!user) {
-            // Create new user
             user = new User_1.default({
                 googleId: profile.id,
                 email: profile.emails?.[0].value,

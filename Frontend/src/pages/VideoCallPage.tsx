@@ -15,7 +15,13 @@ const VideoCallPage: React.FC = () => {
 
   useEffect(() => {
     const urlParams = new URLSearchParams(location.search);
-    if (urlParams.get("active") === "true") {
+    const roomFromUrl = urlParams.get("room");
+    
+    if (urlParams.get("active") === "true" && roomFromUrl) {
+      setRoomId(roomFromUrl);
+      // We'll need the username too - let's get it from localStorage or use a default
+      const storedUserName = localStorage.getItem("userName") || "Anonymous User";
+      setUserName(storedUserName);
       setCurrentView("call");
     }
   }, [location.search]);

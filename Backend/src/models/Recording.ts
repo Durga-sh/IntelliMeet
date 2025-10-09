@@ -79,8 +79,8 @@ RecordingSchema.index({ status: 1, createdAt: -1 });
 RecordingSchema.index({ s3Key: 1 });
 
 // Virtual for recording duration in human-readable format
-RecordingSchema.virtual("formattedDuration").get(function () {
-  if (!this.duration) return null;
+RecordingSchema.virtual("formattedDuration").get(function (this: IRecording) {
+  if (!this.duration || typeof this.duration !== "number") return null;
 
   const seconds = Math.floor(this.duration / 1000);
   const minutes = Math.floor(seconds / 60);
@@ -96,8 +96,8 @@ RecordingSchema.virtual("formattedDuration").get(function () {
 });
 
 // Virtual for file size in human-readable format
-RecordingSchema.virtual("formattedFileSize").get(function () {
-  if (!this.fileSize) return null;
+RecordingSchema.virtual("formattedFileSize").get(function (this: IRecording) {
+  if (!this.fileSize || typeof this.fileSize !== "number") return null;
 
   const sizes = ["B", "KB", "MB", "GB"];
   let size = this.fileSize;

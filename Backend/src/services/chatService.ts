@@ -24,15 +24,9 @@ export interface TypingUser {
   timestamp: Date;
 }
 
-export interface MessageReaction {
-  messageId: string;
-  userId: string;
-  emoji: string;
-}
-
 export class ChatService extends EventEmitter {
-  private typingUsers: Map<string, Map<string, TypingUser>> = new Map(); // roomId -> userId -> TypingUser
-  private typingTimeouts: Map<string, NodeJS.Timeout> = new Map(); // userId -> timeout
+  private typingUsers: Map<string, Map<string, TypingUser>> = new Map();
+  private typingTimeouts: Map<string, NodeJS.Timeout> = new Map();
 
   constructor() {
     super();
@@ -59,15 +53,19 @@ export class ChatService extends EventEmitter {
         deliveredTo: [],
         readBy: [],
         reactions: [],
+        isEdited: false,
       });
 
       const savedMessage = await chatMessage.save();
-      this.emit("message-sent", savedMessage);
+
+      // Convert to plain object with proper date serialization
+      const messageObj = savedMessage.toObject();
+      this.emit("message-sent", messageObj);
 
       return savedMessage;
     } catch (error) {
       console.error("Error sending message:", error);
-      throw error;
+      throw new Error("Failed to send message");
     }
   }
 
@@ -89,21 +87,22 @@ export class ChatService extends EventEmitter {
       const messages = await ChatMessage.find(query)
         .sort({ timestamp: -1 })
         .limit(limit)
+        .lean()
         .exec();
 
       return messages.reverse(); // Return in chronological order
     } catch (error) {
       console.error("Error getting messages:", error);
-      throw error;
+      throw new Error("Failed to get messages");
     }
   }
 
   /**
    * Mark message as delivered to a user
    */
-  async markAsDelivered(messageId: string, userId: string): Promise<void> {
+  async markAsDelivered(messageId: string, userId: string): Promise<boolean> {
     try {
-      await ChatMessage.updateOne(
+      const result = await ChatMessage.updateOne(
         {
           id: messageId,
           "deliveredTo.userId": { $ne: userId },
@@ -118,23 +117,27 @@ export class ChatService extends EventEmitter {
         }
       );
 
-      this.emit("message-delivered", { messageId, userId });
+      if (result.modifiedCount > 0) {
+        this.emit("message-delivered", { messageId, userId });
+        return true;
+      }
+      return false;
     } catch (error) {
       console.error("Error marking message as delivered:", error);
-      throw error;
+      return false;
     }
   }
 
   /**
    * Mark message as read by a user
    */
-  async markAsRead(messageId: string, userId: string): Promise<void> {
+  async markAsRead(messageId: string, userId: string): Promise<boolean> {
     try {
       // First mark as delivered if not already
       await this.markAsDelivered(messageId, userId);
 
       // Then mark as read
-      await ChatMessage.updateOne(
+      const result = await ChatMessage.updateOne(
         {
           id: messageId,
           "readBy.userId": { $ne: userId },
@@ -149,10 +152,14 @@ export class ChatService extends EventEmitter {
         }
       );
 
-      this.emit("message-read", { messageId, userId });
+      if (result.modifiedCount > 0) {
+        this.emit("message-read", { messageId, userId });
+        return true;
+      }
+      return false;
     } catch (error) {
       console.error("Error marking message as read:", error);
-      throw error;
+      return false;
     }
   }
 
@@ -162,14 +169,17 @@ export class ChatService extends EventEmitter {
   async markMessagesAsRead(
     messageIds: string[],
     userId: string
-  ): Promise<void> {
+  ): Promise<number> {
     try {
+      let count = 0;
       for (const messageId of messageIds) {
-        await this.markAsRead(messageId, userId);
+        const success = await this.markAsRead(messageId, userId);
+        if (success) count++;
       }
+      return count;
     } catch (error) {
       console.error("Error marking messages as read:", error);
-      throw error;
+      return 0;
     }
   }
 
@@ -183,14 +193,14 @@ export class ChatService extends EventEmitter {
   ): Promise<IChatMessage | null> {
     try {
       const updatedMessage = await ChatMessage.findOneAndUpdate(
-        { id: messageId, userId }, // Only allow user to edit their own messages
+        { id: messageId, userId },
         {
           message: newMessage,
           isEdited: true,
           editedAt: new Date(),
         },
         { new: true }
-      );
+      ).lean();
 
       if (updatedMessage) {
         this.emit("message-edited", updatedMessage);
@@ -199,7 +209,7 @@ export class ChatService extends EventEmitter {
       return updatedMessage;
     } catch (error) {
       console.error("Error editing message:", error);
-      throw error;
+      return null;
     }
   }
 
@@ -218,7 +228,7 @@ export class ChatService extends EventEmitter {
       return false;
     } catch (error) {
       console.error("Error deleting message:", error);
-      throw error;
+      return false;
     }
   }
 
@@ -229,7 +239,7 @@ export class ChatService extends EventEmitter {
     messageId: string,
     userId: string,
     emoji: string
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       // Remove existing reaction from this user first
       await ChatMessage.updateOne(
@@ -242,7 +252,7 @@ export class ChatService extends EventEmitter {
       );
 
       // Add new reaction
-      await ChatMessage.updateOne(
+      const result = await ChatMessage.updateOne(
         { id: messageId },
         {
           $push: {
@@ -255,19 +265,23 @@ export class ChatService extends EventEmitter {
         }
       );
 
-      this.emit("message-reaction-added", { messageId, userId, emoji });
+      if (result.modifiedCount > 0) {
+        this.emit("message-reaction-added", { messageId, userId, emoji });
+        return true;
+      }
+      return false;
     } catch (error) {
       console.error("Error adding reaction:", error);
-      throw error;
+      return false;
     }
   }
 
   /**
    * Remove reaction from a message
    */
-  async removeReaction(messageId: string, userId: string): Promise<void> {
+  async removeReaction(messageId: string, userId: string): Promise<boolean> {
     try {
-      await ChatMessage.updateOne(
+      const result = await ChatMessage.updateOne(
         { id: messageId },
         {
           $pull: {
@@ -276,10 +290,14 @@ export class ChatService extends EventEmitter {
         }
       );
 
-      this.emit("message-reaction-removed", { messageId, userId });
+      if (result.modifiedCount > 0) {
+        this.emit("message-reaction-removed", { messageId, userId });
+        return true;
+      }
+      return false;
     } catch (error) {
       console.error("Error removing reaction:", error);
-      throw error;
+      return false;
     }
   }
 
@@ -297,11 +315,13 @@ export class ChatService extends EventEmitter {
     }
 
     const roomTyping = this.typingUsers.get(roomId)!;
+    const timeoutKey = `${roomId}-${userId}`;
 
     // Clear existing timeout for this user
-    const existingTimeout = this.typingTimeouts.get(`${roomId}-${userId}`);
+    const existingTimeout = this.typingTimeouts.get(timeoutKey);
     if (existingTimeout) {
       clearTimeout(existingTimeout);
+      this.typingTimeouts.delete(timeoutKey);
     }
 
     if (isTyping) {
@@ -317,11 +337,10 @@ export class ChatService extends EventEmitter {
         this.setTyping(roomId, userId, userName, false);
       }, 3000);
 
-      this.typingTimeouts.set(`${roomId}-${userId}`, timeout);
+      this.typingTimeouts.set(timeoutKey, timeout);
     } else {
       // Remove user from typing list
       roomTyping.delete(userId);
-      this.typingTimeouts.delete(`${roomId}-${userId}`);
     }
 
     // Emit typing update
@@ -351,7 +370,12 @@ export class ChatService extends EventEmitter {
           // Remove users who have been typing for more than 5 seconds
           if (now.getTime() - typingUser.timestamp.getTime() > 5000) {
             roomTyping.delete(userId);
-            this.typingTimeouts.delete(`${roomId}-${userId}`);
+            const timeoutKey = `${roomId}-${userId}`;
+            const timeout = this.typingTimeouts.get(timeoutKey);
+            if (timeout) {
+              clearTimeout(timeout);
+              this.typingTimeouts.delete(timeoutKey);
+            }
 
             this.emit("typing-update", {
               roomId,
@@ -360,7 +384,7 @@ export class ChatService extends EventEmitter {
           }
         }
       }
-    }, 2000); // Check every 2 seconds
+    }, 2000);
   }
 
   /**
@@ -371,10 +395,11 @@ export class ChatService extends EventEmitter {
     if (roomTyping && roomTyping.has(userId)) {
       roomTyping.delete(userId);
 
-      const timeout = this.typingTimeouts.get(`${roomId}-${userId}`);
+      const timeoutKey = `${roomId}-${userId}`;
+      const timeout = this.typingTimeouts.get(timeoutKey);
       if (timeout) {
         clearTimeout(timeout);
-        this.typingTimeouts.delete(`${roomId}-${userId}`);
+        this.typingTimeouts.delete(timeoutKey);
       }
 
       this.emit("typing-update", {
@@ -391,8 +416,8 @@ export class ChatService extends EventEmitter {
     try {
       const count = await ChatMessage.countDocuments({
         roomId,
-        userId: { $ne: userId }, // Exclude user's own messages
-        "readBy.userId": { $ne: userId }, // Messages not read by user
+        userId: { $ne: userId },
+        "readBy.userId": { $ne: userId },
       });
 
       return count;
@@ -417,12 +442,26 @@ export class ChatService extends EventEmitter {
       })
         .sort({ timestamp: -1 })
         .limit(limit)
+        .lean()
         .exec();
 
       return messages;
     } catch (error) {
       console.error("Error searching messages:", error);
-      throw error;
+      return [];
+    }
+  }
+
+  /**
+   * Delete all messages in a room (cleanup)
+   */
+  async deleteRoomMessages(roomId: string): Promise<number> {
+    try {
+      const result = await ChatMessage.deleteMany({ roomId });
+      return result.deletedCount || 0;
+    } catch (error) {
+      console.error("Error deleting room messages:", error);
+      return 0;
     }
   }
 }

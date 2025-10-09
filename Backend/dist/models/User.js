@@ -34,7 +34,6 @@ const UserSchema = new mongoose_1.default.Schema({
         default: Date.now,
     },
 });
-// Hash password before saving
 UserSchema.pre("save", async function (next) {
     if (this.password && this.isModified("password")) {
         const salt = await bcryptjs_1.default.genSalt(10);
@@ -42,7 +41,6 @@ UserSchema.pre("save", async function (next) {
     }
     next();
 });
-// Method to compare password
 UserSchema.methods.comparePassword = async function (enteredPassword) {
     if (!this.password)
         return false;

@@ -33,6 +33,8 @@ const JoinCall: React.FC<JoinCallProps> = ({ onJoinCall, onError }) => {
       });
 
       if (response.success) {
+        // Store username in localStorage for future use
+        localStorage.setItem("userName", userName.trim());
         onJoinCall(response.room.id, userName.trim());
       } else {
         onError(response.message || "Failed to create room");
@@ -63,6 +65,8 @@ const JoinCall: React.FC<JoinCallProps> = ({ onJoinCall, onError }) => {
       });
 
       if (response.success) {
+        // Store username in localStorage for future use
+        localStorage.setItem("userName", userName.trim());
         onJoinCall(roomId.trim(), userName.trim());
       } else {
         onError(response.message || "Failed to join room");
