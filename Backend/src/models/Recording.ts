@@ -9,12 +9,30 @@ export interface IRecording extends Document {
   localPath?: string;
   s3Url?: string;
   s3Key?: string;
-  status: "recording" | "processing" | "completed" | "failed";
+  status:
+    | "recording"
+    | "processing"
+    | "completed"
+    | "failed"
+    | "local"
+    | "uploading"
+    | "uploaded";
+  uploadStatus: "pending" | "queued" | "uploading" | "uploaded" | "failed";
+  uploadAttempts?: number;
+  uploadError?: string;
   participants: string[];
   fileSize?: number; // in bytes
   createdBy?: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IRecordingModel extends mongoose.Model<IRecording> {
+  findByRoom(roomId: string): Promise<IRecording[]>;
+  findActive(): Promise<IRecording[]>;
+  findCompleted(): Promise<IRecording[]>;
+  findReadyForUpload(): Promise<IRecording[]>;
+  cleanupOld(daysOld?: number): Promise<any>;
 }
 
 const RecordingSchema: Schema = new Schema(
@@ -51,9 +69,30 @@ const RecordingSchema: Schema = new Schema(
     },
     status: {
       type: String,
-      enum: ["recording", "processing", "completed", "failed"],
+      enum: [
+        "recording",
+        "processing",
+        "completed",
+        "failed",
+        "local",
+        "uploading",
+        "uploaded",
+      ],
       default: "recording",
       index: true,
+    },
+    uploadStatus: {
+      type: String,
+      enum: ["pending", "queued", "uploading", "uploaded", "failed"],
+      default: "pending",
+      index: true,
+    },
+    uploadAttempts: {
+      type: Number,
+      default: 0,
+    },
+    uploadError: {
+      type: String,
     },
     participants: [
       {
@@ -76,6 +115,7 @@ const RecordingSchema: Schema = new Schema(
 // Indexes for better query performance
 RecordingSchema.index({ roomId: 1, startTime: -1 });
 RecordingSchema.index({ status: 1, createdAt: -1 });
+RecordingSchema.index({ uploadStatus: 1, createdAt: -1 });
 RecordingSchema.index({ s3Key: 1 });
 
 // Virtual for recording duration in human-readable format
@@ -138,7 +178,18 @@ RecordingSchema.statics.findActive = function () {
 
 // Static method to find completed recordings
 RecordingSchema.statics.findCompleted = function () {
-  return this.find({ status: "completed" }).sort({ endTime: -1 });
+  return this.find({
+    status: { $in: ["completed", "local", "uploaded"] },
+  }).sort({ endTime: -1 });
+};
+
+// Static method to find recordings ready for upload
+RecordingSchema.statics.findReadyForUpload = function () {
+  return this.find({
+    status: "local",
+    uploadStatus: { $in: ["pending", "failed"] },
+    localPath: { $exists: true },
+  }).sort({ createdAt: 1 });
 };
 
 // Static method to cleanup old recordings
@@ -152,4 +203,7 @@ RecordingSchema.statics.cleanupOld = function (daysOld: number = 30) {
   });
 };
 
-export default mongoose.model<IRecording>("Recording", RecordingSchema);
+export default mongoose.model<IRecording, IRecordingModel>(
+  "Recording",
+  RecordingSchema
+);

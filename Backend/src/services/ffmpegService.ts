@@ -2,7 +2,31 @@ import ffmpeg from "fluent-ffmpeg";
 import { EventEmitter } from "events";
 import { join } from "path";
 import { promises as fs } from "fs";
+import { existsSync } from "fs";
 import s3Service from "./s3Service";
+
+// Configure FFmpeg binary path
+const FFMPEG_PATHS = [
+  // Winget installation path
+  `${process.env.LOCALAPPDATA}\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg.Essentials_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0-essentials_build\\bin\\ffmpeg.exe`,
+  // Common manual installation paths
+  "C:\\ffmpeg\\bin\\ffmpeg.exe",
+  "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe",
+  // Try system PATH
+  "ffmpeg",
+];
+
+function findFFmpegPath(): string {
+  for (const path of FFMPEG_PATHS) {
+    if (path === "ffmpeg" || existsSync(path)) {
+      console.log(`Using FFmpeg at: ${path}`);
+      return path;
+    }
+  }
+  throw new Error(
+    "FFmpeg not found. Please install FFmpeg and ensure it's in your PATH."
+  );
+}
 
 export interface FFmpegProcessOptions {
   roomId: string;
@@ -15,10 +39,13 @@ export interface FFmpegProcessOptions {
 export class FFmpegService extends EventEmitter {
   private activeProcesses: Map<string, ffmpeg.FfmpegCommand> = new Map();
   private recordingsDir: string;
+  private ffmpegPath: string;
 
   constructor() {
     super();
     this.recordingsDir = join(process.cwd(), "recordings");
+    this.ffmpegPath = findFFmpegPath();
+    ffmpeg.setFfmpegPath(this.ffmpegPath);
     this.ensureRecordingsDir();
   }
 
@@ -93,18 +120,23 @@ export class FFmpegService extends EventEmitter {
           console.log(`FFmpeg finished for room ${roomId}`);
           this.activeProcesses.delete(roomId);
 
-          // Upload to S3
+          // Store locally only (no S3 upload)
           try {
-            const s3Key = `recordings/${outputFilename}`;
-            const s3Url = await s3Service.uploadFile(outputPath, s3Key);
+            // Get file size
+            const stats = await require("fs").promises.stat(outputPath);
+            const fileSize = stats.size;
+
+            console.log(
+              `Recording completed: ${outputPath} (${fileSize} bytes)`
+            );
+
             this.emit("recordingCompleted", {
               roomId,
               outputPath,
-              s3Url,
-              s3Key,
+              fileSize,
             });
           } catch (error) {
-            console.error("Failed to upload recording to S3:", error);
+            console.error("Failed to get recording file stats:", error);
             this.emit("recordingError", { roomId, error });
           }
         })

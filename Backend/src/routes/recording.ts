@@ -24,6 +24,35 @@ router.get("/test", async (req: Request, res: Response) => {
   });
 });
 
+// Temporary endpoint to create rooms for testing - no auth required
+router.post("/create-room/:roomId", async (req: Request, res: Response) => {
+  try {
+    const { roomId } = req.params;
+    const mediasoupService = require("../services/mediasoupService").default;
+
+    await mediasoupService.createRoom(roomId);
+
+    res.json({
+      success: true,
+      message: `Room ${roomId} created successfully`,
+      roomId: roomId,
+    });
+  } catch (error: any) {
+    if (error.message && error.message.includes("already exists")) {
+      res.json({
+        success: true,
+        message: `Room ${req.params.roomId} already exists`,
+        roomId: req.params.roomId,
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to create room",
+      });
+    }
+  }
+});
+
 // Mock data for testing - no auth required
 router.get("/mock-status/:roomId", async (req: Request, res: Response) => {
   const { roomId } = req.params;
@@ -369,7 +398,7 @@ router.get("/progress/:roomId", async (req: Request, res: Response) => {
 
     switch (recording.status) {
       case "recording":
-        progressPercentage = 25;
+        progressPercentage = 50;
         currentStep = "Recording in progress";
         break;
       case "processing":
@@ -377,6 +406,14 @@ router.get("/progress/:roomId", async (req: Request, res: Response) => {
         currentStep = "Processing video";
         break;
       case "completed":
+        progressPercentage = 100;
+        currentStep = "Recording completed and saved locally";
+        break;
+      case "local":
+        progressPercentage = 100;
+        currentStep = "Recording saved locally";
+        break;
+      case "uploaded":
         progressPercentage = 100;
         currentStep = "Recording completed";
         break;
@@ -389,6 +426,7 @@ router.get("/progress/:roomId", async (req: Request, res: Response) => {
     const progressData = {
       roomId,
       status: recording.status,
+      uploadStatus: recording.uploadStatus,
       progressPercentage,
       currentStep,
       startTime: recording.startTime,
@@ -397,8 +435,14 @@ router.get("/progress/:roomId", async (req: Request, res: Response) => {
       participants: recording.participants.length,
       isRecording: recording.status === "recording",
       isProcessing: recording.status === "processing",
-      isCompleted: recording.status === "completed",
+      isLocal: recording.status === "local",
+      isUploading: recording.status === "uploading",
+      isCompleted:
+        recording.status === "completed" || recording.status === "uploaded",
       isFailed: recording.status === "failed",
+      localPath: recording.localPath,
+      s3Url: recording.s3Url,
+      fileSize: recording.fileSize,
     };
 
     res.json({
@@ -466,6 +510,93 @@ router.post("/cleanup", async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: "Failed to cleanup recordings",
+    });
+  }
+});
+
+// Get upload queue status
+router.get("/upload-queue/status", async (req: Request, res: Response) => {
+  try {
+    const status = recordingService.getUploadQueueStatus();
+    res.json({
+      success: true,
+      data: status,
+    });
+  } catch (error) {
+    console.error("Error getting upload queue status:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get upload queue status",
+    });
+  }
+});
+
+// Manually trigger upload for a recording
+router.post("/upload/:recordingId", async (req: Request, res: Response) => {
+  try {
+    const { recordingId } = req.params;
+    const { priority = 5 } = req.body;
+
+    await recordingService.uploadRecording(recordingId, priority);
+
+    res.json({
+      success: true,
+      message: `Recording ${recordingId} queued for upload`,
+    });
+  } catch (error: any) {
+    console.error("Error queuing recording for upload:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to queue recording for upload",
+    });
+  }
+});
+
+// Retry failed uploads
+router.post("/upload/retry-failed", async (req: Request, res: Response) => {
+  try {
+    await recordingService.retryFailedUploads();
+
+    res.json({
+      success: true,
+      message: "Failed uploads have been re-queued",
+    });
+  } catch (error) {
+    console.error("Error retrying failed uploads:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to retry failed uploads",
+    });
+  }
+});
+
+// Get recordings by upload status
+router.get("/upload-status/:status", async (req: Request, res: Response) => {
+  try {
+    const { status } = req.params;
+
+    if (
+      !["pending", "queued", "uploading", "uploaded", "failed"].includes(status)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid upload status",
+      });
+    }
+
+    const recordings = await recordingService.getRecordingsByUploadStatus(
+      status as any
+    );
+
+    res.json({
+      success: true,
+      data: recordings,
+    });
+  } catch (error) {
+    console.error("Error getting recordings by upload status:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get recordings by upload status",
     });
   }
 });

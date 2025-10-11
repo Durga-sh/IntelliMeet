@@ -7,7 +7,13 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn src/server.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "recordings:list": "node recording-manager.js list-local",
+    "recordings:list-db": "node recording-manager.js list-db",
+    "recordings:stats": "node recording-manager.js stats",
+    "recordings:monitor": "node recording-manager.js monitor",
+    "check:storage": "node check-storage.js",
+    "diagnose:recording": "node diagnose-recording.js"
   },
   "keywords": [],
   "author": "",
@@ -23,6 +29,7 @@
     "crypto": "^1.0.1",
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
+    "ffmpeg": "^0.0.4",
     "fluent-ffmpeg": "^2.1.3",
     "google-auth-library": "^10.1.0",
     "jsonwebtoken": "^9.0.2",

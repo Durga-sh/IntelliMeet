@@ -8,12 +8,52 @@ const events_1 = require("events");
 const mediasoupService_1 = __importDefault(require("./mediasoupService"));
 const ffmpegService_1 = __importDefault(require("./ffmpegService"));
 const s3Service_1 = __importDefault(require("./s3Service"));
+const uploadQueueService_1 = __importDefault(require("./uploadQueueService"));
 const Recording_1 = __importDefault(require("../models/Recording"));
 class RecordingService extends events_1.EventEmitter {
     constructor() {
         super();
         this.recordings = new Map();
         this.setupEventHandlers();
+        this.setupUploadQueueHandlers();
+    }
+    setupUploadQueueHandlers() {
+        // Listen to upload queue events
+        uploadQueueService_1.default.on("uploadQueued", ({ recordingId }) => {
+            this.emit("uploadQueued", { recordingId });
+        });
+        uploadQueueService_1.default.on("uploadStarted", ({ recordingId, attempt }) => {
+            const recording = this.recordings.get(this.getRoomIdByRecordingId(recordingId));
+            if (recording) {
+                recording.uploadStatus = "uploading";
+                this.emit("uploadStarted", { recordingId, attempt });
+            }
+        });
+        uploadQueueService_1.default.on("uploadCompleted", ({ recordingId, s3Url, fileSize }) => {
+            const recording = this.recordings.get(this.getRoomIdByRecordingId(recordingId));
+            if (recording) {
+                recording.s3Url = s3Url;
+                recording.uploadStatus = "uploaded";
+                recording.status = "uploaded";
+                this.emit("uploadCompleted", { recordingId, s3Url, fileSize });
+            }
+        });
+        uploadQueueService_1.default.on("uploadFailed", ({ recordingId, error }) => {
+            const recording = this.recordings.get(this.getRoomIdByRecordingId(recordingId));
+            if (recording) {
+                recording.uploadStatus = "failed";
+                this.emit("uploadFailed", { recordingId, error });
+            }
+        });
+    }
+    getRoomIdByRecordingId(recordingId) {
+        // Find room ID by recording ID from the in-memory map
+        for (const [roomId, recording] of this.recordings.entries()) {
+            if (recording.id === recordingId) {
+                return roomId;
+            }
+        }
+        return "";
     }
     setupEventHandlers() {
         // Listen to FFmpeg events
@@ -25,24 +65,30 @@ class RecordingService extends events_1.EventEmitter {
                 this.emit("recordingStarted", recording);
             }
         });
-        ffmpegService_1.default.on("recordingCompleted", async ({ roomId, outputPath, s3Url, s3Key }) => {
+        ffmpegService_1.default.on("recordingCompleted", async ({ roomId, outputPath, fileSize }) => {
             const recording = this.recordings.get(roomId);
             if (recording) {
                 recording.endTime = new Date();
                 recording.duration =
                     recording.endTime.getTime() - recording.startTime.getTime();
-                recording.s3Url = s3Url;
-                recording.s3Key = s3Key;
-                recording.status = "completed";
+                recording.localPath = outputPath;
+                recording.fileSize = fileSize;
+                recording.status = "completed"; // Mark as completed (no S3 upload)
+                recording.uploadStatus = "uploaded"; // Skip upload queue
                 // Update in database
                 try {
-                    await Recording_1.default.findOneAndUpdate({ id: recording.id }, {
+                    const dbRecording = await Recording_1.default.findOneAndUpdate({ id: recording.id }, {
                         endTime: recording.endTime,
                         duration: recording.duration,
-                        s3Url: recording.s3Url,
-                        s3Key: recording.s3Key,
+                        localPath: recording.localPath,
+                        fileSize: recording.fileSize,
                         status: recording.status,
-                    });
+                        uploadStatus: recording.uploadStatus,
+                    }, { new: true });
+                    console.log(`Recording ${recording.id} saved locally: ${outputPath}`);
+                    console.log(`File size: ${(fileSize / (1024 * 1024)).toFixed(2)} MB`);
+                    console.log(`Database updated successfully`);
+                    // No S3 upload for now
                 }
                 catch (error) {
                     console.error("Error updating recording in database:", error);
@@ -77,29 +123,53 @@ class RecordingService extends events_1.EventEmitter {
             roomId,
             startTime: new Date(),
             status: "recording",
+            uploadStatus: "pending",
             participants,
         };
         this.recordings.set(roomId, recording);
         try {
-            // Save to database
+            // Ensure room exists before starting recording
+            try {
+                await mediasoupService_1.default.createRoom(roomId);
+                console.log(`✅ Room ${roomId} created for recording`);
+            }
+            catch (error) {
+                if (error.message && error.message.includes("already exists")) {
+                    console.log(`✅ Room ${roomId} already exists`);
+                }
+                else {
+                    throw error;
+                }
+            }
+            // Start mediasoup recording FIRST (this is the critical part)
+            await mediasoupService_1.default.startRecording(roomId);
+            // Save to database in background (non-blocking)
             const dbRecording = new Recording_1.default({
                 id: recording.id,
                 roomId: recording.roomId,
                 startTime: recording.startTime,
                 status: recording.status,
+                uploadStatus: recording.uploadStatus,
                 participants: recording.participants,
                 createdBy: createdBy,
             });
-            await dbRecording.save();
-            // Start mediasoup recording
-            await mediasoupService_1.default.startRecording(roomId);
+            // Save to database without blocking (fire and forget)
+            dbRecording
+                .save()
+                .then(() => {
+                console.log(`✅ Recording ${recording.id} saved to database`);
+            })
+                .catch((dbError) => {
+                console.error(`❌ Failed to save recording ${recording.id} to database:`, dbError.message);
+                // Don't fail the recording just because database failed
+            });
             console.log(`Started recording for room ${roomId}`);
             return recording;
         }
         catch (error) {
             this.recordings.delete(roomId);
-            // Clean up database record if it was created
-            await Recording_1.default.deleteOne({ id: recording.id }).catch(console.error);
+            // Don't try to clean up database if we couldn't save to it in the first place
+            console.error(`Failed to start recording for room ${roomId}:`, error);
             throw error;
         }
     }
@@ -209,6 +279,47 @@ class RecordingService extends events_1.EventEmitter {
         }
     }
     /**
+     * Manually trigger upload for a recording
+     */
+    async uploadRecording(recordingId, priority = 5) {
+        try {
+            const recording = await Recording_1.default.findOne({ id: recordingId });
+            if (!recording) {
+                throw new Error(`Recording not found: ${recordingId}`);
+            }
+            if (!recording.localPath) {
+                throw new Error(`No local path found for recording: ${recordingId}`);
+            }
+            if (recording.uploadStatus === "uploaded") {
+                throw new Error(`Recording already uploaded: ${recordingId}`);
+            }
+            await uploadQueueService_1.default.enqueueUpload(recording, priority);
+            console.log(`Manually queued recording ${recordingId} for upload`);
+        }
+        catch (error) {
+            console.error(`Error queuing recording ${recordingId} for upload:`, error);
+            throw error;
+        }
+    }
+    /**
+     * Get upload queue status
+     */
+    getUploadQueueStatus() {
+        return uploadQueueService_1.default.getQueueStatus();
+    }
+    /**
+     * Retry failed uploads
+     */
+    async retryFailedUploads() {
+        await uploadQueueService_1.default.retryFailedUploads();
+    }
+    /**
+     * Get recordings by upload status
+     */
+    async getRecordingsByUploadStatus(uploadStatus) {
+        return await Recording_1.default.find({ uploadStatus }).sort({ createdAt: -1 });
+    }
+    /**
      * Get statistics
      */
     getStatistics() {
@@ -217,8 +328,11 @@ class RecordingService extends events_1.EventEmitter {
             total: recordings.length,
             active: recordings.filter((r) => r.status === "recording").length,
             completed: recordings.filter((r) => r.status === "completed").length,
+            local: recordings.filter((r) => r.status === "local").length,
+            uploaded: recordings.filter((r) => r.status === "uploaded").length,
             failed: recordings.filter((r) => r.status === "failed").length,
             processing: recordings.filter((r) => r.status === "processing").length,
+            uploading: recordings.filter((r) => r.status === "uploading").length,
         };
     }
 }

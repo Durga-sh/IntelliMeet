@@ -15,7 +15,7 @@ export class S3Service {
   }
 
   /**
-   * Upload a file to S3
+   * Upload a file to S3 and delete local file
    */
   async uploadFile(
     localPath: string,
@@ -39,6 +39,37 @@ export class S3Service {
       await unlink(localPath);
 
       console.log(`File uploaded successfully to S3: ${result.Location}`);
+      return result.Location;
+    } catch (error) {
+      console.error("Error uploading file to S3:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Upload a file to S3 without deleting the local file
+   */
+  async uploadFileWithoutDelete(
+    localPath: string,
+    s3Key: string,
+    contentType: string = "video/mp4"
+  ): Promise<string> {
+    try {
+      const fileStream = createReadStream(localPath);
+
+      const params: AWS.S3.PutObjectRequest = {
+        Bucket: config.AWS_S3_BUCKET,
+        Key: s3Key,
+        Body: fileStream,
+        ContentType: contentType,
+        ACL: "private", // Change to 'public-read' if you want public access
+      };
+
+      const result = await this.s3.upload(params).promise();
+
+      console.log(
+        `File uploaded successfully to S3 (local file preserved): ${result.Location}`
+      );
       return result.Location;
     } catch (error) {
       console.error("Error uploading file to S3:", error);

@@ -9,6 +9,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const http_1 = require("http");
 const socket_io_1 = require("socket.io");
 const socketService_1 = __importDefault(require("./services/socketService"));
+const recordingService_1 = __importDefault(require("./services/recordingService"));
 dotenv_1.default.config();
 const PORT = config_1.default.PORT || 5000;
 // Create HTTP server
@@ -23,7 +24,16 @@ const io = new socket_io_1.Server(server, {
 });
 // Initialize Socket Service
 new socketService_1.default(io);
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Socket.IO server initialized`);
+    console.log(`Upload queue service initialized`);
+    // Retry any failed uploads from previous sessions
+    try {
+        await recordingService_1.default.retryFailedUploads();
+        console.log(`Retried failed uploads from previous sessions`);
+    }
+    catch (error) {
+        console.error(`Error retrying failed uploads:`, error);
+    }
 });

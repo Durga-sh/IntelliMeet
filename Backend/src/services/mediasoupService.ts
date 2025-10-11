@@ -203,6 +203,12 @@ export class MediasoupService extends EventEmitter {
 
       console.log(`Producer created: ${producer.id} (${kind})`);
 
+      // If room is being recorded, consume this new producer
+      const room = this.rooms.get(peer.roomId);
+      if (room && room.recording) {
+        await this.consumeNewProducerForRecording(peer.roomId, producer);
+      }
+
       // Notify other peers about new producer
       this.emit("newProducer", {
         roomId: peer.roomId,
@@ -362,6 +368,13 @@ export class MediasoupService extends EventEmitter {
       room.recording = true;
       room.recordingStartTime = new Date();
 
+      // Consume existing producers for recording
+      await this.consumeProducersForRecording(
+        roomId,
+        audioPlainTransport,
+        videoPlainTransport
+      );
+
       // Start FFmpeg recording
       await ffmpegService.startRecording({
         roomId,
@@ -373,6 +386,191 @@ export class MediasoupService extends EventEmitter {
     } catch (error) {
       console.error(`Error starting recording for room ${roomId}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Consume a new producer for an ongoing recording
+   */
+  private async consumeNewProducerForRecording(
+    roomId: string,
+    producer: Producer
+  ): Promise<void> {
+    const room = this.rooms.get(roomId);
+    if (!room || !room.recording) {
+      return;
+    }
+
+    console.log(
+      `Consuming new ${producer.kind} producer ${producer.id} for ongoing recording`
+    );
+
+    try {
+      const plainTransport =
+        producer.kind === "audio"
+          ? room.audioPlainTransport
+          : room.videoPlainTransport;
+
+      if (!plainTransport) {
+        console.error(
+          `No ${producer.kind} plain transport available for recording`
+        );
+        return;
+      }
+
+      const rtpCapabilities =
+        producer.kind === "audio"
+          ? {
+              codecs: [
+                {
+                  mimeType: "audio/opus",
+                  kind: "audio" as const,
+                  clockRate: 48000,
+                  channels: 2,
+                  preferredPayloadType: 111,
+                },
+              ],
+              headerExtensions: [],
+            }
+          : {
+              codecs: [
+                {
+                  mimeType: "video/VP8",
+                  kind: "video" as const,
+                  clockRate: 90000,
+                  preferredPayloadType: 96,
+                },
+              ],
+              headerExtensions: [],
+            };
+
+      const consumer = await plainTransport.consume({
+        producerId: producer.id,
+        rtpCapabilities,
+      });
+
+      await consumer.resume();
+      console.log(
+        `Successfully consuming ${producer.kind} producer ${producer.id} for recording`
+      );
+    } catch (error) {
+      console.error(
+        `Error consuming new ${producer.kind} producer for recording:`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Consume existing producers for recording
+   */
+  private async consumeProducersForRecording(
+    roomId: string,
+    audioPlainTransport: PlainTransport,
+    videoPlainTransport: PlainTransport
+  ): Promise<void> {
+    console.log(`Consuming producers for recording in room ${roomId}`);
+
+    // Find all producers in the room
+    const roomProducers: { audio: Producer[]; video: Producer[] } = {
+      audio: [],
+      video: [],
+    };
+
+    for (const peer of this.peers.values()) {
+      if (peer.roomId === roomId) {
+        for (const producer of peer.producers.values()) {
+          if (producer.kind === "audio") {
+            roomProducers.audio.push(producer);
+          } else if (producer.kind === "video") {
+            roomProducers.video.push(producer);
+          }
+        }
+      }
+    }
+
+    console.log(
+      `Found ${roomProducers.audio.length} audio and ${roomProducers.video.length} video producers`
+    );
+
+    // Consume audio producers
+    for (const audioProducer of roomProducers.audio) {
+      try {
+        const consumer = await audioPlainTransport.consume({
+          producerId: audioProducer.id,
+          rtpCapabilities: {
+            codecs: [
+              {
+                mimeType: "audio/opus",
+                kind: "audio",
+                clockRate: 48000,
+                channels: 2,
+                preferredPayloadType: 111,
+              },
+            ],
+            headerExtensions: [],
+          },
+        });
+
+        console.log(
+          `Consuming audio producer ${audioProducer.id} for recording`
+        );
+
+        // Resume the consumer
+        await consumer.resume();
+      } catch (error) {
+        console.error(
+          `Error consuming audio producer ${audioProducer.id}:`,
+          error
+        );
+      }
+    }
+
+    // Consume video producers
+    for (const videoProducer of roomProducers.video) {
+      try {
+        const consumer = await videoPlainTransport.consume({
+          producerId: videoProducer.id,
+          rtpCapabilities: {
+            codecs: [
+              {
+                mimeType: "video/VP8",
+                kind: "video",
+                clockRate: 90000,
+                preferredPayloadType: 96,
+              },
+            ],
+            headerExtensions: [],
+          },
+        });
+
+        console.log(
+          `Consuming video producer ${videoProducer.id} for recording`
+        );
+
+        // Resume the consumer
+        await consumer.resume();
+      } catch (error) {
+        console.error(
+          `Error consuming video producer ${videoProducer.id}:`,
+          error
+        );
+      }
+    }
+
+    if (roomProducers.audio.length === 0 && roomProducers.video.length === 0) {
+      console.warn(`⚠️  No producers found in room ${roomId} for recording`);
+      console.warn(
+        `   This means no users have enabled camera/microphone yet.`
+      );
+      console.warn(
+        `   FFmpeg will start but may not create files without input streams.`
+      );
+      console.warn(
+        `   To fix: Have users join with camera/mic enabled before recording.`
+      );
+    } else {
+      console.log(`✅ Found active producers - recording should work!`);
     }
   }
 
