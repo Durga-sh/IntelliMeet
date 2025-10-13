@@ -37,7 +37,6 @@ export class RecordingService extends EventEmitter {
   }
 
   private setupUploadQueueHandlers(): void {
-    // Listen to upload queue events
     uploadQueueService.on("uploadQueued", ({ recordingId }) => {
       this.emit("uploadQueued", { recordingId });
     });
@@ -79,7 +78,6 @@ export class RecordingService extends EventEmitter {
   }
 
   private getRoomIdByRecordingId(recordingId: string): string {
-    // Find room ID by recording ID from the in-memory map
     for (const [roomId, recording] of this.recordings.entries()) {
       if (recording.id === recordingId) {
         return roomId;
@@ -89,12 +87,19 @@ export class RecordingService extends EventEmitter {
   }
 
   private setupEventHandlers(): void {
-    // Listen to FFmpeg events
     ffmpegService.on("recordingStarted", ({ roomId, outputPath }) => {
       const recording = this.recordings.get(roomId);
       if (recording) {
         recording.localPath = outputPath;
         recording.status = "recording";
+
+        // Update database
+        Recording.findOneAndUpdate(
+          { id: recording.id },
+          { localPath: outputPath, status: "recording" },
+          { new: true }
+        ).catch((err) => console.error("Error updating recording in DB:", err));
+
         this.emit("recordingStarted", recording);
       }
     });
@@ -109,10 +114,9 @@ export class RecordingService extends EventEmitter {
             recording.endTime.getTime() - recording.startTime.getTime();
           recording.localPath = outputPath;
           recording.fileSize = fileSize;
-          recording.status = "completed"; // Mark as completed (no S3 upload)
-          recording.uploadStatus = "uploaded"; // Skip upload queue
+          recording.status = "completed";
+          recording.uploadStatus = "uploaded"; // Mark as uploaded (local only for now)
 
-          // Update in database
           try {
             const dbRecording = await Recording.findOneAndUpdate(
               { id: recording.id },
@@ -124,20 +128,22 @@ export class RecordingService extends EventEmitter {
                 status: recording.status,
                 uploadStatus: recording.uploadStatus,
               },
-              { new: true }
+              { new: true, upsert: false }
             );
 
-            console.log(
-              `Recording ${recording.id} saved locally: ${outputPath}`
-            );
-            console.log(
-              `File size: ${(fileSize / (1024 * 1024)).toFixed(2)} MB`
-            );
-            console.log(`Database updated successfully`);
-
-            // No S3 upload for now
+            if (dbRecording) {
+              console.log(`✅ Recording ${recording.id} updated in database`);
+              console.log(`📁 File saved: ${outputPath}`);
+              console.log(
+                `📊 File size: ${(fileSize / (1024 * 1024)).toFixed(2)} MB`
+              );
+            } else {
+              console.warn(
+                `⚠️ Recording ${recording.id} not found in database for update`
+              );
+            }
           } catch (error) {
-            console.error("Error updating recording in database:", error);
+            console.error("❌ Error updating recording in database:", error);
           }
 
           this.emit("recordingCompleted", recording);
@@ -149,6 +155,16 @@ export class RecordingService extends EventEmitter {
       const recording = this.recordings.get(roomId);
       if (recording) {
         recording.status = "failed";
+
+        // Update database
+        Recording.findOneAndUpdate(
+          { id: recording.id },
+          { status: "failed" },
+          { new: true }
+        ).catch((err) =>
+          console.error("Error updating failed recording in DB:", err)
+        );
+
         this.emit("recordingError", { recording, error });
       }
     });
@@ -157,14 +173,21 @@ export class RecordingService extends EventEmitter {
       const recording = this.recordings.get(roomId);
       if (recording && recording.status === "recording") {
         recording.status = "processing";
+
+        // Update database
+        Recording.findOneAndUpdate(
+          { id: recording.id },
+          { status: "processing" },
+          { new: true }
+        ).catch((err) =>
+          console.error("Error updating processing status in DB:", err)
+        );
+
         this.emit("recordingStopped", recording);
       }
     });
   }
 
-  /**
-   * Start recording a room
-   */
   async startRecording(
     roomId: string,
     participants: string[] = [],
@@ -174,8 +197,9 @@ export class RecordingService extends EventEmitter {
       throw new Error(`Recording already active for room ${roomId}`);
     }
 
+    const recordingId = `rec_${roomId}_${Date.now()}`;
     const recording: RecordingMetadata = {
-      id: `${roomId}_${Date.now()}`,
+      id: recordingId,
       roomId,
       startTime: new Date(),
       status: "recording",
@@ -186,59 +210,51 @@ export class RecordingService extends EventEmitter {
     this.recordings.set(roomId, recording);
 
     try {
-      // Ensure room exists before starting recording
+      // Ensure room exists
       try {
         await mediasoupService.createRoom(roomId);
-        console.log(`✅ Room ${roomId} created for recording`);
+        console.log(`✅ Room ${roomId} ready for recording`);
       } catch (error: any) {
-        if (error.message && error.message.includes("already exists")) {
-          console.log(`✅ Room ${roomId} already exists`);
-        } else {
+        if (!error.message || !error.message.includes("already exists")) {
           throw error;
         }
+        console.log(`✅ Room ${roomId} already exists`);
       }
 
-      // Start mediasoup recording FIRST (this is the critical part)
-      await mediasoupService.startRecording(roomId);
-
-      // Save to database in background (non-blocking)
+      // Save to database BEFORE starting mediasoup recording
       const dbRecording = new Recording({
         id: recording.id,
         roomId: recording.roomId,
         startTime: recording.startTime,
-        status: recording.status,
+        status: "recording",
         uploadStatus: recording.uploadStatus,
         participants: recording.participants,
         createdBy: createdBy,
       });
 
-      // Save to database without blocking (fire and forget)
-      dbRecording
-        .save()
-        .then(() => {
-          console.log(`✅ Recording ${recording.id} saved to database`);
-        })
-        .catch((dbError) => {
-          console.error(
-            `❌ Failed to save recording ${recording.id} to database:`,
-            dbError.message
-          );
-          // Don't fail the recording just because database failed
-        });
+      await dbRecording.save();
+      console.log(`✅ Recording ${recording.id} saved to database`);
 
-      console.log(`Started recording for room ${roomId}`);
+      // Now start mediasoup recording
+      await mediasoupService.startRecording(roomId);
+      console.log(`✅ Mediasoup recording started for room ${roomId}`);
+
       return recording;
-    } catch (error) {
+    } catch (error: any) {
       this.recordings.delete(roomId);
-      // Don't try to clean up database if we couldn't save to it in the first place
-      console.error(`Failed to start recording for room ${roomId}:`, error);
+
+      // Clean up database entry if mediasoup recording failed
+      try {
+        await Recording.deleteOne({ id: recordingId });
+      } catch (dbError) {
+        console.error("Error cleaning up database entry:", dbError);
+      }
+
+      console.error(`❌ Failed to start recording for room ${roomId}:`, error);
       throw error;
     }
   }
 
-  /**
-   * Stop recording a room
-   */
   async stopRecording(roomId: string): Promise<RecordingMetadata | null> {
     const recording = this.recordings.get(roomId);
     if (!recording) {
@@ -249,49 +265,35 @@ export class RecordingService extends EventEmitter {
       // Stop mediasoup recording
       await mediasoupService.stopRecording(roomId);
 
-      console.log(`Stopped recording for room ${roomId}`);
+      console.log(`✅ Recording stopped for room ${roomId}`);
       return recording;
     } catch (error) {
-      console.error(`Error stopping recording for room ${roomId}:`, error);
+      console.error(`❌ Error stopping recording for room ${roomId}:`, error);
       throw error;
     }
   }
 
-  /**
-   * Get recording by room ID
-   */
   getRecording(roomId: string): RecordingMetadata | null {
     return this.recordings.get(roomId) || null;
   }
 
-  /**
-   * Get all recordings
-   */
   getAllRecordings(): RecordingMetadata[] {
     return Array.from(this.recordings.values());
   }
 
-  /**
-   * Get completed recordings
-   */
   getCompletedRecordings(): RecordingMetadata[] {
     return Array.from(this.recordings.values()).filter(
-      (recording) => recording.status === "completed"
+      (recording) =>
+        recording.status === "completed" || recording.status === "uploaded"
     );
   }
 
-  /**
-   * Get active recordings
-   */
   getActiveRecordings(): RecordingMetadata[] {
     return Array.from(this.recordings.values()).filter(
       (recording) => recording.status === "recording"
     );
   }
 
-  /**
-   * Delete recording (from S3 and local storage)
-   */
   async deleteRecording(roomId: string): Promise<void> {
     const recording = this.recordings.get(roomId);
     if (!recording) {
@@ -304,20 +306,20 @@ export class RecordingService extends EventEmitter {
         await s3Service.deleteFile(recording.s3Key);
       }
 
-      // Remove from local storage
+      // Delete from database
+      await Recording.deleteOne({ id: recording.id });
+
+      // Remove from memory
       this.recordings.delete(roomId);
 
-      console.log(`Deleted recording for room ${roomId}`);
+      console.log(`✅ Deleted recording for room ${roomId}`);
       this.emit("recordingDeleted", recording);
     } catch (error) {
-      console.error(`Error deleting recording for room ${roomId}:`, error);
+      console.error(`❌ Error deleting recording for room ${roomId}:`, error);
       throw error;
     }
   }
 
-  /**
-   * Get signed URL for downloading recording
-   */
   async getRecordingDownloadUrl(
     roomId: string,
     expiresIn: number = 3600
@@ -330,9 +332,6 @@ export class RecordingService extends EventEmitter {
     return await s3Service.getSignedUrl(recording.s3Key, expiresIn);
   }
 
-  /**
-   * Clean up old recordings
-   */
   async cleanupOldRecordings(daysOld: number = 30): Promise<void> {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysOld);
@@ -344,30 +343,33 @@ export class RecordingService extends EventEmitter {
     for (const [roomId, recording] of recordingsToDelete) {
       try {
         await this.deleteRecording(roomId);
-        console.log(`Cleaned up old recording: ${recording.id}`);
+        console.log(`✅ Cleaned up old recording: ${recording.id}`);
       } catch (error) {
-        console.error(`Error cleaning up recording ${recording.id}:`, error);
+        console.error(`❌ Error cleaning up recording ${recording.id}:`, error);
       }
     }
 
-    // Also clean up FFmpeg local files
     await ffmpegService.cleanupOldRecordings(daysOld);
   }
 
-  /**
-   * Update recording participants
-   */
   updateRecordingParticipants(roomId: string, participants: string[]): void {
     const recording = this.recordings.get(roomId);
     if (recording) {
       recording.participants = participants;
+
+      // Update in database
+      Recording.findOneAndUpdate(
+        { id: recording.id },
+        { participants },
+        { new: true }
+      ).catch((err) =>
+        console.error("Error updating participants in DB:", err)
+      );
+
       this.emit("recordingUpdated", recording);
     }
   }
 
-  /**
-   * Manually trigger upload for a recording
-   */
   async uploadRecording(
     recordingId: string,
     priority: number = 5
@@ -397,32 +399,20 @@ export class RecordingService extends EventEmitter {
     }
   }
 
-  /**
-   * Get upload queue status
-   */
   getUploadQueueStatus() {
     return uploadQueueService.getQueueStatus();
   }
 
-  /**
-   * Retry failed uploads
-   */
   async retryFailedUploads(): Promise<void> {
     await uploadQueueService.retryFailedUploads();
   }
 
-  /**
-   * Get recordings by upload status
-   */
   async getRecordingsByUploadStatus(
     uploadStatus: "pending" | "queued" | "uploading" | "uploaded" | "failed"
   ): Promise<IRecording[]> {
     return await Recording.find({ uploadStatus }).sort({ createdAt: -1 });
   }
 
-  /**
-   * Get statistics
-   */
   getStatistics() {
     const recordings = Array.from(this.recordings.values());
     return {

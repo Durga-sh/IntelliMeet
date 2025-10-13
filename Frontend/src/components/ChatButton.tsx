@@ -20,10 +20,10 @@ const ChatButton: React.FC<ChatButtonProps> = ({
         onClick={onClick}
         variant={isActive ? "default" : "outline"}
         size="lg"
-        className="rounded-full p-3"
+        className="rounded-full w-12 h-12 sm:w-14 sm:h-14 transition-all hover:scale-105"
         title="Toggle Chat"
       >
-        <MessageCircle className="h-6 w-6" />
+        <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
       </Button>
       
       {unreadCount > 0 && (

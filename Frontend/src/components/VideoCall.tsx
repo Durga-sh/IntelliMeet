@@ -15,8 +15,7 @@ import {
   Play,
   Square
 } from "lucide-react";
-import WebRTCService, { User } from ".././services/webrtcService";
-// import RecordingStatusChecker from "./RecordingStatusChecker";
+import MediasoupWebRTCService, { MediasoupUser } from "../services/mediasoupWebRTCService";
 import RecordingIndicator from "./RecordingIndicator";
 import ChatComponent from "./ChatComponent";
 import ChatButton from "./ChatButton";
@@ -30,25 +29,45 @@ interface VideoCallProps {
 interface RemoteVideo {
   userId: string;
   stream: MediaStream;
-  user: User;
+  user: MediasoupUser;
 }
 
+const API_BASE_URL = 'http://localhost:5000';
+
+// Helper function to determine grid layout based on number of participants
+const getGridLayoutClass = (remoteCount: number): string => {
+  const totalParticipants = remoteCount + 1; // +1 for local user
+  
+  switch (totalParticipants) {
+    case 1:
+      return 'grid-1';
+    case 2:
+      return 'grid-2';
+    case 3:
+    case 4:
+      return 'grid-3-4';
+    case 5:
+    case 6:
+      return 'grid-5-6';
+    default:
+      return 'grid-many';
+  }
+};
+
 const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) => {
-  const [webrtcService] = useState(() => new WebRTCService());
+  const [webrtcService] = useState(() => new MediasoupWebRTCService());
   const [isConnected, setIsConnected] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [users, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<MediasoupUser[]>([]);
   const [remoteVideos, setRemoteVideos] = useState<RemoteVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
   
-  // Recording states
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStatus, setRecordingStatus] = useState<string>('not-started');
   const [recordingError, setRecordingError] = useState<string | null>(null);
 
-  // Chat states
   const [isChatVisible, setIsChatVisible] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string>("");
 
@@ -56,53 +75,48 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
   const remoteVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
 
   useEffect(() => {
-    console.log("VideoCall component initializing with:", {
-      roomId,
-      userName,
-      webrtcService
-    });
-
     const initializeCall = async () => {
       try {
-        // Configure WebRTC service callbacks
+        // Set up event handlers
         webrtcService.setOptions({
-          onRoomJoined: (_roomId: string, userId: string, allUsers: User[]) => {
-            console.log("Room joined. All users:", allUsers);
+          onRoomJoined: (_roomId: string, userId: string, allUsers: MediasoupUser[]) => {
+            console.log("✅ Room joined. User ID:", userId, "All users:", allUsers);
             setCurrentUserId(userId);
-            // Set all users except current user
             const otherUsers = allUsers.filter(u => u.id !== userId);
             setUsers(otherUsers);
           },
-          onUserJoined: (user: User) => {
-            console.log("User joined:", user);
+          onUserJoined: (user: MediasoupUser) => {
+            console.log("👋 User joined:", user);
             setUsers(prev => {
               const filtered = prev.filter(u => u.id !== user.id);
               return [...filtered, user];
             });
           },
           onUserLeft: (userId: string) => {
-            console.log("User left:", userId);
+            console.log("👋 User left:", userId);
             setUsers(prev => prev.filter(u => u.id !== userId));
             setRemoteVideos(prev => prev.filter(rv => rv.userId !== userId));
           },
           onUserVideoToggled: (userId: string, enabled: boolean) => {
+            console.log(`📹 User ${userId} video:`, enabled);
             setUsers(prev => prev.map(u => 
               u.id === userId ? { ...u, isVideoEnabled: enabled } : u
             ));
           },
           onUserAudioToggled: (userId: string, enabled: boolean) => {
+            console.log(`🎤 User ${userId} audio:`, enabled);
             setUsers(prev => prev.map(u => 
               u.id === userId ? { ...u, isAudioEnabled: enabled } : u
             ));
           },
           onUserScreenShareToggled: (userId: string, sharing: boolean) => {
+            console.log(`🖥️ User ${userId} screen sharing:`, sharing);
             setUsers(prev => prev.map(u => 
               u.id === userId ? { ...u, isScreenSharing: sharing } : u
             ));
           },
           onRemoteStream: (userId: string, stream: MediaStream) => {
-            console.log("Received remote stream from:", userId);
-            // Use current users state instead of stale closure
+            console.log("📺 Received remote stream from:", userId);
             setUsers(currentUsers => {
               const user = currentUsers.find(u => u.id === userId);
               if (user) {
@@ -114,26 +128,55 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
               return currentUsers;
             });
           },
+          onRecordingStarted: (recordingId: string, startTime: Date) => {
+            console.log("🔴 Recording started:", recordingId, startTime);
+            setIsRecording(true);
+            setRecordingStatus('recording');
+          },
+          onRecordingStopped: (recordingId: string, endTime: Date) => {
+            console.log("⏹️ Recording stopped:", recordingId, endTime);
+            setIsRecording(false);
+            setRecordingStatus('processing');
+          },
           onError: (err: any) => {
-            console.error("WebRTC Error:", err);
+            console.error("❌ WebRTC Error:", err);
             setError(err.message || "An error occurred");
           }
         });
 
         // Connect to server
-        console.log("Connecting to server...");
-        await webrtcService.connect();
-        console.log("Connected to server");
-        
+        console.log("🔌 Connecting to server...");
+        await webrtcService.connect(API_BASE_URL);
+        console.log("✅ Connected to server");
+
         // Join room
-        console.log("Joining room:", roomId, "as:", userName);
+        console.log("🚪 Joining room:", roomId);
         await webrtcService.joinRoom(roomId, userName);
-        console.log("Joined room successfully");
         
+        // Wait a bit for router capabilities
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Start local media
+        console.log("🎥 Starting local media...");
+        const localStream = await webrtcService.startLocalMedia(true, true);
+        console.log("✅ Local media started, stream:", localStream);
+        
+        if (localVideoRef.current && localStream) {
+          localVideoRef.current.srcObject = localStream;
+          console.log("📹 Local video stream assigned to video element");
+          
+          // Force play the video
+          try {
+            await localVideoRef.current.play();
+            console.log("📹 Local video started playing");
+          } catch (playError) {
+            console.log("📹 Auto-play blocked, will play on user interaction");
+          }
+        }
+
         setIsConnected(true);
-        console.log("VideoCall component initialized successfully");
       } catch (err: any) {
-        console.error("Failed to initialize call:", err);
+        console.error("❌ Failed to initialize call:", err);
         setError(err.message || "Failed to join the call");
       }
     };
@@ -141,77 +184,90 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
     initializeCall();
 
     return () => {
+      console.log("🧹 Cleaning up video call...");
       webrtcService.disconnect();
     };
   }, [roomId, userName]);
 
-  // Update remote video refs when remote videos change
   useEffect(() => {
     remoteVideos.forEach(({ userId, stream }) => {
       const videoElement = remoteVideoRefs.current.get(userId);
       if (videoElement) {
         videoElement.srcObject = stream;
+        console.log("📺 Set remote video stream for user:", userId);
       }
     });
   }, [remoteVideos]);
 
-  // Handle local video stream display
+  // Debug effect to check local video stream
   useEffect(() => {
-    if (isConnected && localVideoRef.current) {
-      const localStream = webrtcService.getLocalStream();
-      if (localStream) {
-        localVideoRef.current.srcObject = localStream;
-        console.log("Local video stream set:", localStream);
-      }
+    if (localVideoRef.current) {
+      console.log("📹 Local video element:", {
+        hasStream: !!localVideoRef.current.srcObject,
+        isVideoEnabled,
+        videoElement: localVideoRef.current
+      });
     }
-  }, [isConnected]);
+  }, [isVideoEnabled]);
 
-  const handleToggleVideo = () => {
-    webrtcService.toggleVideo();
-    setIsVideoEnabled(prev => !prev);
+  const handleToggleVideo = async () => {
+    try {
+      const newState = await webrtcService.toggleVideo();
+      setIsVideoEnabled(newState);
+      console.log("📹 Video toggled:", newState);
+      
+      // If enabling video, ensure the stream is properly set
+      if (newState && localVideoRef.current) {
+        const localStream = webrtcService.getLocalStream();
+        if (localStream && localVideoRef.current.srcObject !== localStream) {
+          console.log("🔄 Refreshing local video stream");
+          localVideoRef.current.srcObject = localStream;
+        }
+      }
+    } catch (err: any) {
+      console.error("❌ Failed to toggle video:", err);
+      setError("Failed to toggle video");
+    }
   };
 
-  const handleToggleAudio = () => {
-    webrtcService.toggleAudio();
-    setIsAudioEnabled(prev => !prev);
+  const handleToggleAudio = async () => {
+    try {
+      const newState = await webrtcService.toggleAudio();
+      setIsAudioEnabled(newState);
+      console.log("🎤 Audio toggled:", newState);
+    } catch (err: any) {
+      console.error("❌ Failed to toggle audio:", err);
+      setError("Failed to toggle audio");
+    }
   };
 
   const handleToggleScreenShare = async () => {
     try {
       if (isScreenSharing) {
-        await webrtcService.stopScreenShare();
-        // Revert to camera stream
-        const localStream = webrtcService.getLocalStream();
-        if (localVideoRef.current && localStream) {
-          localVideoRef.current.srcObject = localStream;
-        }
+        // Stop screen sharing - not implemented in mediasoupWebRTCService yet
+        console.warn("⚠️ Screen sharing stop not implemented yet");
+        setIsScreenSharing(false);
       } else {
-        const screenStream = await webrtcService.startScreenShare();
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = screenStream;
-        }
+        // Start screen sharing - not implemented in mediasoupWebRTCService yet
+        console.warn("⚠️ Screen sharing not implemented yet");
       }
-      setIsScreenSharing(prev => !prev);
     } catch (err: any) {
-      console.error("Screen share error:", err);
+      console.error("❌ Screen share error:", err);
       setError("Failed to toggle screen sharing");
     }
   };
 
-  // Recording functions
   const startRecording = async () => {
     try {
       setRecordingError(null);
+      console.log('🎬 Starting recording for room:', roomId);
       
-      // Temporarily disabled to fix chat issue
-      console.log('Recording start disabled');
-      setIsRecording(true);
-      setRecordingStatus('recording');
-      return;
+      const participants = [currentUserId, ...users.map(u => u.id)];
       
-      const participants = users.map(u => u.id);
+      const url = `${API_BASE_URL}/api/recordings/start/${roomId}`;
+      console.log('📡 Fetch URL:', url);
       
-      const response = await fetch(`/api/recording/start/${roomId}`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -219,98 +275,116 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
         body: JSON.stringify({ participants })
       });
 
+      console.log('📥 Response status:', response.status);
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('❌ Non-JSON response:', text.substring(0, 200));
+        throw new Error(`Server returned non-JSON response. Content-Type: ${contentType}`);
+      }
+
       const data = await response.json();
+      console.log('✅ Recording response:', data);
       
       if (data.success) {
         setIsRecording(true);
         setRecordingStatus('recording');
-        console.log('Recording started:', data.data);
+        console.log('✅ Recording started:', data.data);
       } else {
-        setRecordingError(data.message || 'Failed to start recording');
+        throw new Error(data.message || 'Failed to start recording');
       }
     } catch (error: any) {
-      setRecordingError(error.message || 'Failed to start recording');
-      console.error('Recording start error:', error);
+      const errorMsg = error.message || 'Failed to start recording';
+      setRecordingError(errorMsg);
+      console.error('❌ Recording start error:', error);
     }
   };
 
   const stopRecording = async () => {
     try {
       setRecordingError(null);
+      console.log('🛑 Stopping recording for room:', roomId);
       
-      // Temporarily disabled to fix chat issue
-      console.log('Recording stop disabled');
-      setIsRecording(false);
-      setRecordingStatus('completed');
-      return;
+      const url = `${API_BASE_URL}/api/recordings/stop/${roomId}`;
+      console.log('📡 Fetch URL:', url);
       
-      const response = await fetch(`/api/recording/stop/${roomId}`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         }
       });
 
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('❌ Non-JSON response:', text.substring(0, 200));
+        throw new Error(`Server returned non-JSON response. Content-Type: ${contentType}`);
+      }
+
       const data = await response.json();
       
       if (data.success) {
         setIsRecording(false);
         setRecordingStatus('processing');
-        console.log('Recording stopped:', data.data);
+        console.log('✅ Recording stopped:', data.data);
         
-        // Start checking status
-        checkRecordingStatus();
+        setTimeout(() => checkRecordingStatus(), 2000);
       } else {
-        setRecordingError(data.message || 'Failed to stop recording');
+        throw new Error(data.message || 'Failed to stop recording');
       }
     } catch (error: any) {
-      setRecordingError(error.message || 'Failed to stop recording');
-      console.error('Recording stop error:', error);
+      const errorMsg = error.message || 'Failed to stop recording';
+      setRecordingError(errorMsg);
+      console.error('❌ Recording stop error:', error);
     }
   };
 
   const checkRecordingStatus = async () => {
     try {
-      // Temporarily disabled to fix chat issue
-      // TODO: Fix the API endpoint or authentication
-      console.log('Recording status check disabled');
-      return;
-      
-      // Use mock endpoint for testing
-      const response = await fetch(`/api/recording/mock-status/${roomId}`);
+      const url = `${API_BASE_URL}/api/recordings/room/${roomId}`;
+      const response = await fetch(url);
 
-      const data = await response.json();
-      
-      if (data.success) {
-        const { progress, storage } = data.data;
-        
-        if (progress.isRecording) {
-          setRecordingStatus('recording');
-          setIsRecording(true);
-        } else if (progress.isProcessing) {
-          setRecordingStatus('processing');
-          setIsRecording(false);
-        } else if (progress.isCompleted && storage.isStored) {
-          setRecordingStatus('completed');
-          setIsRecording(false);
-        } else if (progress.isFailed) {
-          setRecordingStatus('failed');
-          setIsRecording(false);
+      if (response.ok) {
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await response.json();
+          
+          if (data.success && data.data) {
+            const recording = data.data;
+            
+            if (recording.status === 'recording') {
+              setRecordingStatus('recording');
+              setIsRecording(true);
+            } else if (recording.status === 'processing') {
+              setRecordingStatus('processing');
+              setIsRecording(false);
+            } else if (recording.status === 'completed' || recording.status === 'uploaded') {
+              setRecordingStatus('completed');
+              setIsRecording(false);
+            } else if (recording.status === 'failed') {
+              setRecordingStatus('failed');
+              setIsRecording(false);
+            }
+          } else {
+            setRecordingStatus('not-started');
+            setIsRecording(false);
+          }
         }
-        
-        console.log('Recording status:', data.data);
+      } else if (response.status === 404) {
+        setRecordingStatus('not-started');
+        setIsRecording(false);
       }
     } catch (error: any) {
-      console.error('Status check error:', error);
+      console.error('❌ Status check error:', error);
     }
   };
 
-  // Check recording status on component mount and periodically
   useEffect(() => {
     if (roomId) {
       checkRecordingStatus();
       
-      // Check status every 5 seconds
       const interval = setInterval(checkRecordingStatus, 5000);
       return () => clearInterval(interval);
     }
@@ -355,17 +429,18 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-white">
+    <div className="flex flex-col h-screen bg-gray-900 text-white relative">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 bg-gray-800">
+      <div className="flex items-center justify-between p-3 bg-gray-800 border-b border-gray-700 flex-shrink-0 z-10">
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2">
-            <Users className="h-5 w-5" />
-            <span>Room: {roomId.substring(0, 8)}</span>
-            <span className="text-gray-400">({users.length + 1} participants)</span>
+            <Users className="h-5 w-5 text-blue-400" />
+            <span className="font-semibold">Room: {roomId.substring(0, 8)}</span>
+            <span className="text-gray-400 bg-gray-700 px-2 py-1 rounded text-sm">
+              {users.length + 1} participant{users.length !== 0 ? 's' : ''}
+            </span>
           </div>
           
-          {/* Recording Status Indicator */}
           <RecordingIndicator 
             roomId={roomId}
             isRecording={isRecording}
@@ -373,40 +448,57 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
           />
         </div>
         <div className="flex items-center space-x-2">
-          <Button variant="ghost" size="sm">
+          <Button variant="ghost" size="sm" className="hover:bg-gray-700">
             <Settings className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      {/* Video Grid */}
-      <div className="flex-1 p-4">
-        <div className={`grid gap-4 h-full ${remoteVideos.length === 0 ? 'grid-cols-1' : 
-          remoteVideos.length === 1 ? 'grid-cols-2' : 
-          remoteVideos.length <= 4 ? 'grid-cols-2 grid-rows-2' : 'grid-cols-3 grid-rows-2'}`}>
+      {/* Video Area */}
+      <div className={`flex-1 p-6 pb-28 transition-all duration-300 ${isChatVisible ? 'mr-80' : ''} min-h-0 overflow-hidden`}>
+        <div className={`video-grid ${getGridLayoutClass(remoteVideos.length)}`} style={{ height: '100%', maxHeight: 'calc(100vh - 200px)' }}>
           
           {/* Local Video */}
-          <Card className="relative overflow-hidden bg-gray-800 border-gray-700">
+          <div className="video-card">
             <video
               ref={localVideoRef}
               autoPlay
               muted
               playsInline
-              className="w-full h-full object-cover"
+              className="video-element"
+              style={{ 
+                display: 'block',
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain', // Show full video without cropping
+                backgroundColor: '#374151',
+                zIndex: isVideoEnabled ? 2 : 1
+              }}
+              onLoadedMetadata={() => console.log("📹 Local video metadata loaded")}
+              onPlay={() => console.log("📹 Local video started playing")}
+              onError={(e) => console.error("📹 Local video error:", e)}
             />
-            <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 px-2 py-1 rounded text-sm">
+            {!isVideoEnabled && (
+              <div className="video-placeholder" style={{ zIndex: 3 }}>
+                <div className="text-center">
+                  <VideoOff className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                  <p className="text-gray-400 font-medium">Camera Off</p>
+                </div>
+              </div>
+            )}
+            <div className="video-overlay" style={{ zIndex: 4 }}>
               You {!isVideoEnabled && "(Video Off)"} {!isAudioEnabled && "(Muted)"}
             </div>
             {isScreenSharing && (
-              <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs">
+              <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs font-medium">
                 Sharing Screen
               </div>
             )}
-          </Card>
+          </div>
 
           {/* Remote Videos */}
           {remoteVideos.map(({ userId, user }) => (
-            <Card key={userId} className="relative overflow-hidden bg-gray-800 border-gray-700">
+            <div key={userId} className="video-card">
               <video
                 ref={(el) => {
                   if (el) {
@@ -415,91 +507,126 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
                 }}
                 autoPlay
                 playsInline
-                className="w-full h-full object-cover"
+                className="video-element"
+                style={{ 
+                  display: user.isVideoEnabled ? 'block' : 'none',
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover'
+                }}
+                onLoadedMetadata={() => console.log(`📹 Remote video metadata loaded for ${userId}`)}
+                onPlay={() => console.log(`📹 Remote video started playing for ${userId}`)}
+                onError={(e) => console.error(`📹 Remote video error for ${userId}:`, e)}
               />
-              <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 px-2 py-1 rounded text-sm">
+              {!user.isVideoEnabled && (
+                <div className="video-placeholder">
+                  <div className="text-center">
+                    <VideoOff className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                    <p className="text-gray-400 font-medium">{user.name}</p>
+                    <p className="text-sm text-gray-500">Camera Off</p>
+                  </div>
+                </div>
+              )}
+              <div className="video-overlay">
                 {user.name} 
                 {!user.isVideoEnabled && " (Video Off)"} 
                 {!user.isAudioEnabled && " (Muted)"}
               </div>
               {user.isScreenSharing && (
-                <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs">
+                <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs font-medium">
                   Sharing Screen
                 </div>
               )}
-            </Card>
+            </div>
           ))}
+
+          {/* Show placeholder for empty slots when only one participant */}
+          {remoteVideos.length === 0 && (
+            <div className="video-card">
+              <div className="video-placeholder">
+                <div className="text-center text-gray-400">
+                  <Users className="h-16 w-16 mx-auto mb-3" />
+                  <p className="text-lg font-medium">Waiting for others to join...</p>
+                  <p className="text-sm text-gray-500 mt-1">Share the room link to invite participants</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex items-center justify-center space-x-4 p-6 bg-gray-800">
-        <Button
-          onClick={handleToggleVideo}
-          variant={isVideoEnabled ? "default" : "destructive"}
-          size="lg"
-          className="rounded-full p-3"
-        >
-          {isVideoEnabled ? <Video className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />}
-        </Button>
-
-        <Button
-          onClick={handleToggleAudio}
-          variant={isAudioEnabled ? "default" : "destructive"}
-          size="lg"
-          className="rounded-full p-3"
-        >
-          {isAudioEnabled ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
-        </Button>
-
-        <Button
-          onClick={handleToggleScreenShare}
-          variant={isScreenSharing ? "secondary" : "outline"}
-          size="lg"
-          className="rounded-full p-3"
-        >
-          {isScreenSharing ? <MonitorOff className="h-6 w-6" /> : <Monitor className="h-6 w-6" />}
-        </Button>
-
-        {/* Recording Controls */}
-        {!isRecording ? (
+      {/* Controls - Fixed Bottom Bar */}
+      <div className="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 z-20">
+        <div className={`flex items-center justify-center space-x-3 p-4 transition-all duration-300 ${isChatVisible ? 'mr-80' : ''}`}>
           <Button
-            onClick={startRecording}
-            variant="outline"
+            onClick={handleToggleVideo}
+            variant={isVideoEnabled ? "default" : "destructive"}
             size="lg"
-            className="rounded-full p-3 border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
-            title="Start Recording"
+            className="rounded-full w-12 h-12 sm:w-14 sm:h-14 transition-all hover:scale-105"
+            title={isVideoEnabled ? "Turn off camera" : "Turn on camera"}
           >
-            <Play className="h-6 w-6" />
+            {isVideoEnabled ? <Video className="h-5 w-5 sm:h-6 sm:w-6" /> : <VideoOff className="h-5 w-5 sm:h-6 sm:w-6" />}
           </Button>
-        ) : (
+
           <Button
-            onClick={stopRecording}
+            onClick={handleToggleAudio}
+            variant={isAudioEnabled ? "default" : "destructive"}
+            size="lg"
+            className="rounded-full w-12 h-12 sm:w-14 sm:h-14 transition-all hover:scale-105"
+            title={isAudioEnabled ? "Mute microphone" : "Unmute microphone"}
+          >
+            {isAudioEnabled ? <Mic className="h-5 w-5 sm:h-6 sm:w-6" /> : <MicOff className="h-5 w-5 sm:h-6 sm:w-6" />}
+          </Button>
+
+          <Button
+            onClick={handleToggleScreenShare}
+            variant={isScreenSharing ? "secondary" : "outline"}
+            size="lg"
+            className="rounded-full w-12 h-12 sm:w-14 sm:h-14 transition-all hover:scale-105"
+            title={isScreenSharing ? "Stop screen sharing" : "Share screen"}
+          >
+            {isScreenSharing ? <MonitorOff className="h-5 w-5 sm:h-6 sm:w-6" /> : <Monitor className="h-5 w-5 sm:h-6 sm:w-6" />}
+          </Button>
+
+          {!isRecording ? (
+            <Button
+              onClick={startRecording}
+              variant="outline"
+              size="lg"
+              className="rounded-full w-12 h-12 sm:w-14 sm:h-14 border-red-500 text-red-500 hover:bg-red-500 hover:text-white transition-all hover:scale-105"
+              title="Start Recording"
+            >
+              <Play className="h-5 w-5 sm:h-6 sm:w-6" />
+            </Button>
+          ) : (
+            <Button
+              onClick={stopRecording}
+              variant="destructive"
+              size="lg"
+              className="rounded-full w-12 h-12 sm:w-14 sm:h-14 animate-pulse transition-all hover:scale-105"
+              title="Stop Recording"
+            >
+              <Square className="h-5 w-5 sm:h-6 sm:w-6" />
+            </Button>
+          )}
+
+          <ChatButton
+            onClick={() => setIsChatVisible(!isChatVisible)}
+            isActive={isChatVisible}
+          />
+
+          <Button
+            onClick={handleLeaveCall}
             variant="destructive"
             size="lg"
-            className="rounded-full p-3 animate-pulse"
-            title="Stop Recording"
+            className="rounded-full w-12 h-12 sm:w-14 sm:h-14 bg-red-600 hover:bg-red-700 transition-all hover:scale-105"
+            title="Leave call"
           >
-            <Square className="h-6 w-6" />
+            <PhoneOff className="h-5 w-5 sm:h-6 sm:w-6" />
           </Button>
-        )}
-
-        <ChatButton
-          onClick={() => setIsChatVisible(!isChatVisible)}
-          isActive={isChatVisible}
-        />
-
-        <Button
-          onClick={handleLeaveCall}
-          variant="destructive"
-          size="lg"
-          className="rounded-full p-3"
-        >
-          <PhoneOff className="h-6 w-6" />
-        </Button>
+        </div>
       </div>
 
-      {/* Recording Error Display */}
       {recordingError && (
         <div className="px-4 py-2 bg-red-900 border-t border-red-700">
           <div className="text-red-200 text-sm">
@@ -514,20 +641,19 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
         </div>
       )}
 
-      {/* Recording Status Panel */}
-      <div className="p-4 bg-gray-100">
-        {/* <RecordingStatusChecker roomId={roomId} /> */}
-      </div>
-
       {/* Chat Component */}
-      <ChatComponent
-        socket={webrtcService.getSocket()}
-        currentUserId={currentUserId}
-        currentUserName={userName}
-        roomId={roomId}
-        isVisible={isChatVisible}
-        onToggle={() => setIsChatVisible(!isChatVisible)}
-      />
+      {isChatVisible && (
+        <div className="fixed right-0 top-0 bottom-0 w-80 z-30 bg-gray-800 border-l border-gray-700">
+          <ChatComponent
+            socket={webrtcService.getSocket()}
+            currentUserId={currentUserId}
+            currentUserName={userName}
+            roomId={roomId}
+            isVisible={isChatVisible}
+            onToggle={() => setIsChatVisible(!isChatVisible)}
+          />
+        </div>
+      )}
     </div>
   );
 };

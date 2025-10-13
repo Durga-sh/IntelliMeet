@@ -14,7 +14,7 @@ import {
 import * as mediasoup from "mediasoup";
 import { EventEmitter } from "events";
 import { mediasoupConfig } from "../config/mediasoup";
-import ffmpegService, { FFmpegService } from "./ffmpegService";
+import ffmpegService from "./ffmpegService";
 
 interface MediasoupRoom {
   id: string;
@@ -23,6 +23,9 @@ interface MediasoupRoom {
   videoPlainTransport?: PlainTransport;
   recording: boolean;
   recordingStartTime?: Date;
+  recordingPending: boolean;
+  audioPort?: number;
+  videoPort?: number;
 }
 
 interface MediasoupPeer {
@@ -37,7 +40,6 @@ export class MediasoupService extends EventEmitter {
   private worker?: Worker;
   private rooms: Map<string, MediasoupRoom> = new Map();
   private peers: Map<string, MediasoupPeer> = new Map();
-  private nextPort = 40000;
 
   constructor() {
     super();
@@ -46,7 +48,6 @@ export class MediasoupService extends EventEmitter {
 
   private async initialize(): Promise<void> {
     try {
-      // Create mediasoup worker
       this.worker = await mediasoup.createWorker(mediasoupConfig.worker);
 
       this.worker.on("died", () => {
@@ -61,9 +62,6 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Create or get existing room
-   */
   async createRoom(roomId: string): Promise<MediasoupRoom> {
     if (this.rooms.has(roomId)) {
       return this.rooms.get(roomId)!;
@@ -74,7 +72,6 @@ export class MediasoupService extends EventEmitter {
     }
 
     try {
-      // Create router
       const router = await this.worker.createRouter({
         mediaCodecs: mediasoupConfig.router.mediaCodecs,
       });
@@ -83,6 +80,7 @@ export class MediasoupService extends EventEmitter {
         id: roomId,
         router,
         recording: false,
+        recordingPending: false,
       };
 
       this.rooms.set(roomId, room);
@@ -95,9 +93,6 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Create WebRTC transport for a peer
-   */
   async createWebRtcTransport(
     roomId: string,
     peerId: string,
@@ -115,7 +110,6 @@ export class MediasoupService extends EventEmitter {
         mediasoupConfig.webRtcTransport
       );
 
-      // Store transport
       let peer = this.peers.get(peerId);
       if (!peer) {
         peer = {
@@ -142,9 +136,6 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Connect WebRTC transport
-   */
   async connectWebRtcTransport(
     peerId: string,
     transportId: string,
@@ -169,9 +160,6 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Create producer
-   */
   async createProducer(
     peerId: string,
     transportId: string,
@@ -196,20 +184,37 @@ export class MediasoupService extends EventEmitter {
 
       peer.producers.set(producer.id, producer);
 
-      // Handle producer events
       producer.on("transportclose", () => {
         peer.producers.delete(producer.id);
       });
 
-      console.log(`Producer created: ${producer.id} (${kind})`);
+      console.log(
+        `🎤📹 Producer created: ${producer.id} (${kind}) for peer ${peerId}`
+      );
 
-      // If room is being recorded, consume this new producer
       const room = this.rooms.get(peer.roomId);
-      if (room && room.recording) {
+      if (room && (room.recording || room.recordingPending)) {
+        console.log(
+          `🔴 Room is recording/pending - consuming new ${kind} producer for recording`
+        );
         await this.consumeNewProducerForRecording(peer.roomId, producer);
+
+        if (room.recordingPending && room.audioPort && room.videoPort) {
+          const producerCount = this.getProducerCount(peer.roomId);
+          if (producerCount === 1) {
+            console.log(
+              `✅ First producer available, starting FFmpeg for room ${peer.roomId}`
+            );
+            await this.startFFmpegRecording(
+              peer.roomId,
+              room.audioPort,
+              room.videoPort
+            );
+            room.recordingPending = false;
+          }
+        }
       }
 
-      // Notify other peers about new producer
       this.emit("newProducer", {
         roomId: peer.roomId,
         peerId,
@@ -224,9 +229,16 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Create consumer
-   */
+  private getProducerCount(roomId: string): number {
+    let count = 0;
+    for (const peer of this.peers.values()) {
+      if (peer.roomId === roomId) {
+        count += peer.producers.size;
+      }
+    }
+    return count;
+  }
+
   async createConsumer(
     peerId: string,
     producerId: string,
@@ -246,7 +258,6 @@ export class MediasoupService extends EventEmitter {
       throw new Error(`Room not found: ${peer.roomId}`);
     }
 
-    // Find producer
     let producer: Producer | undefined;
     for (const [, p] of this.peers) {
       if (p.roomId === peer.roomId) {
@@ -259,13 +270,11 @@ export class MediasoupService extends EventEmitter {
       return null;
     }
 
-    // Check if router can consume
     if (!room.router.canConsume({ producerId, rtpCapabilities })) {
       return null;
     }
 
     try {
-      // Get a suitable transport for consuming
       const transport = Array.from(peer.transports.values())[0];
       if (!transport) {
         throw new Error("No transport available for consuming");
@@ -274,12 +283,11 @@ export class MediasoupService extends EventEmitter {
       const consumer = await transport.consume({
         producerId,
         rtpCapabilities,
-        paused: true, // Start paused
+        paused: true,
       });
 
       peer.consumers.set(consumer.id, consumer);
 
-      // Handle consumer events
       consumer.on("transportclose", () => {
         peer.consumers.delete(consumer.id);
       });
@@ -297,9 +305,6 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Resume consumer
-   */
   async resumeConsumer(peerId: string, consumerId: string): Promise<void> {
     const peer = this.peers.get(peerId);
     if (!peer) {
@@ -320,9 +325,6 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Start recording a room
-   */
   async startRecording(roomId: string): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) {
@@ -334,75 +336,108 @@ export class MediasoupService extends EventEmitter {
     }
 
     try {
-      // Get available ports
-      const audioPort = this.getNextPort();
-      const videoPort = this.getNextPort();
+      const producerCount = this.getProducerCount(roomId);
 
-      // Create plain transports for FFmpeg
+      console.log(`🎥 Starting recording for room ${roomId}`);
+      console.log(`👥 Active producers in room: ${producerCount}`);
+
+      // Create plain transports with comedia=true (mediasoup learns ports from incoming RTP)
       const audioPlainTransport = await room.router.createPlainTransport({
-        ...mediasoupConfig.plainTransport,
+        listenIp: { ip: "127.0.0.1", announcedIp: undefined },
         rtcpMux: false,
-        comedia: true,
+        comedia: true, // Learn remote address/port from first RTP packet
       });
 
       const videoPlainTransport = await room.router.createPlainTransport({
-        ...mediasoupConfig.plainTransport,
+        listenIp: { ip: "127.0.0.1", announcedIp: undefined },
         rtcpMux: false,
-        comedia: true,
+        comedia: true, // Learn remote address/port from first RTP packet
       });
 
-      // Connect transports
-      await audioPlainTransport.connect({
-        ip: "127.0.0.1",
-        port: audioPort,
-      });
+      // Get the ports mediasoup is listening on
+      const audioPort = audioPlainTransport.tuple.localPort;
+      const videoPort = videoPlainTransport.tuple.localPort;
 
-      await videoPlainTransport.connect({
-        ip: "127.0.0.1",
-        port: videoPort,
-      });
+      console.log(
+        `📡 Mediasoup listening on - Audio: ${audioPort}, Video: ${videoPort}`
+      );
 
-      // Store transports
+      // Store transports and ports
       room.audioPlainTransport = audioPlainTransport;
       room.videoPlainTransport = videoPlainTransport;
+      room.audioPort = audioPort;
+      room.videoPort = videoPort;
       room.recording = true;
       room.recordingStartTime = new Date();
 
-      // Consume existing producers for recording
+      // Consume existing producers for recording (this starts RTP flow)
       await this.consumeProducersForRecording(
         roomId,
         audioPlainTransport,
         videoPlainTransport
       );
 
-      // Start FFmpeg recording
+      console.log(`📤 RTP streams ready`);
+
+      // Now start FFmpeg to receive the RTP (after consumers are sending)
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Give consumers time to start
+
+      await this.startFFmpegRecording(roomId, audioPort, videoPort);
+
+      if (producerCount === 0) {
+        console.warn(`⚠️ No active producers found in room ${roomId}`);
+        console.warn(`⏳ Recording is ready and waiting for users`);
+        room.recordingPending = true;
+      } else {
+        console.log(`✅ Recording ${producerCount} producers`);
+      }
+
+      console.log(`✅ Recording started successfully for room ${roomId}`);
+    } catch (error) {
+      console.error(`❌ Error starting recording for room ${roomId}:`, error);
+      // Cleanup on error
+      if (room.audioPlainTransport) {
+        room.audioPlainTransport.close();
+        room.audioPlainTransport = undefined;
+      }
+      if (room.videoPlainTransport) {
+        room.videoPlainTransport.close();
+        room.videoPlainTransport = undefined;
+      }
+      room.recording = false;
+      throw error;
+    }
+  }
+
+  private async startFFmpegRecording(
+    roomId: string,
+    audioPort: number,
+    videoPort: number
+  ): Promise<void> {
+    try {
       await ffmpegService.startRecording({
         roomId,
         audioPort,
         videoPort,
       });
-
-      console.log(`Started recording for room ${roomId}`);
+      console.log(`🎬 FFmpeg process started for room ${roomId}`);
     } catch (error) {
-      console.error(`Error starting recording for room ${roomId}:`, error);
+      console.error(`❌ Failed to start FFmpeg for room ${roomId}:`, error);
       throw error;
     }
   }
 
-  /**
-   * Consume a new producer for an ongoing recording
-   */
   private async consumeNewProducerForRecording(
     roomId: string,
     producer: Producer
   ): Promise<void> {
     const room = this.rooms.get(roomId);
-    if (!room || !room.recording) {
+    if (!room || (!room.recording && !room.recordingPending)) {
       return;
     }
 
     console.log(
-      `Consuming new ${producer.kind} producer ${producer.id} for ongoing recording`
+      `🔴 Consuming new ${producer.kind} producer ${producer.id} for ongoing recording`
     );
 
     try {
@@ -451,27 +486,20 @@ export class MediasoupService extends EventEmitter {
 
       await consumer.resume();
       console.log(
-        `Successfully consuming ${producer.kind} producer ${producer.id} for recording`
+        `✅ Successfully consuming ${producer.kind} producer ${producer.id}`
       );
     } catch (error) {
-      console.error(
-        `Error consuming new ${producer.kind} producer for recording:`,
-        error
-      );
+      console.error(`Error consuming new ${producer.kind} producer:`, error);
     }
   }
 
-  /**
-   * Consume existing producers for recording
-   */
   private async consumeProducersForRecording(
     roomId: string,
     audioPlainTransport: PlainTransport,
     videoPlainTransport: PlainTransport
   ): Promise<void> {
-    console.log(`Consuming producers for recording in room ${roomId}`);
+    console.log(`🎙️ Consuming producers for recording in room ${roomId}`);
 
-    // Find all producers in the room
     const roomProducers: { audio: Producer[]; video: Producer[] } = {
       audio: [],
       video: [],
@@ -490,10 +518,9 @@ export class MediasoupService extends EventEmitter {
     }
 
     console.log(
-      `Found ${roomProducers.audio.length} audio and ${roomProducers.video.length} video producers`
+      `📊 Found ${roomProducers.audio.length} audio and ${roomProducers.video.length} video producers`
     );
 
-    // Consume audio producers
     for (const audioProducer of roomProducers.audio) {
       try {
         const consumer = await audioPlainTransport.consume({
@@ -512,12 +539,10 @@ export class MediasoupService extends EventEmitter {
           },
         });
 
-        console.log(
-          `Consuming audio producer ${audioProducer.id} for recording`
-        );
+        console.log(`🎤 Consuming audio producer ${audioProducer.id}`);
 
-        // Resume the consumer
         await consumer.resume();
+        console.log(`✅ Audio consumer ${consumer.id} resumed`);
       } catch (error) {
         console.error(
           `Error consuming audio producer ${audioProducer.id}:`,
@@ -526,7 +551,6 @@ export class MediasoupService extends EventEmitter {
       }
     }
 
-    // Consume video producers
     for (const videoProducer of roomProducers.video) {
       try {
         const consumer = await videoPlainTransport.consume({
@@ -544,12 +568,10 @@ export class MediasoupService extends EventEmitter {
           },
         });
 
-        console.log(
-          `Consuming video producer ${videoProducer.id} for recording`
-        );
+        console.log(`📹 Consuming video producer ${videoProducer.id}`);
 
-        // Resume the consumer
         await consumer.resume();
+        console.log(`✅ Video consumer ${consumer.id} resumed`);
       } catch (error) {
         console.error(
           `Error consuming video producer ${videoProducer.id}:`,
@@ -557,26 +579,8 @@ export class MediasoupService extends EventEmitter {
         );
       }
     }
-
-    if (roomProducers.audio.length === 0 && roomProducers.video.length === 0) {
-      console.warn(`⚠️  No producers found in room ${roomId} for recording`);
-      console.warn(
-        `   This means no users have enabled camera/microphone yet.`
-      );
-      console.warn(
-        `   FFmpeg will start but may not create files without input streams.`
-      );
-      console.warn(
-        `   To fix: Have users join with camera/mic enabled before recording.`
-      );
-    } else {
-      console.log(`✅ Found active producers - recording should work!`);
-    }
   }
 
-  /**
-   * Stop recording a room
-   */
   async stopRecording(roomId: string): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) {
@@ -588,10 +592,10 @@ export class MediasoupService extends EventEmitter {
     }
 
     try {
-      // Stop FFmpeg recording
-      await ffmpegService.stopRecording(roomId);
+      if (!room.recordingPending) {
+        await ffmpegService.stopRecording(roomId);
+      }
 
-      // Close plain transports
       if (room.audioPlainTransport) {
         room.audioPlainTransport.close();
         room.audioPlainTransport = undefined;
@@ -603,7 +607,10 @@ export class MediasoupService extends EventEmitter {
       }
 
       room.recording = false;
+      room.recordingPending = false;
       room.recordingStartTime = undefined;
+      room.audioPort = undefined;
+      room.videoPort = undefined;
 
       console.log(`Stopped recording for room ${roomId}`);
     } catch (error) {
@@ -612,17 +619,11 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Get router RTP capabilities
-   */
   getRouterRtpCapabilities(roomId: string): RtpCapabilities | null {
     const room = this.rooms.get(roomId);
     return room ? room.router.rtpCapabilities : null;
   }
 
-  /**
-   * Remove peer
-   */
   async removePeer(peerId: string): Promise<void> {
     const peer = this.peers.get(peerId);
     if (!peer) {
@@ -630,7 +631,6 @@ export class MediasoupService extends EventEmitter {
     }
 
     try {
-      // Close all transports (this will automatically close producers and consumers)
       for (const transport of peer.transports.values()) {
         transport.close();
       }
@@ -638,7 +638,6 @@ export class MediasoupService extends EventEmitter {
       this.peers.delete(peerId);
       console.log(`Removed peer: ${peerId}`);
 
-      // Check if room is empty and clean up if necessary
       const roomPeers = Array.from(this.peers.values()).filter(
         (p) => p.roomId === peer.roomId
       );
@@ -651,9 +650,6 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Clean up empty room
-   */
   private async cleanupRoom(roomId: string): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) {
@@ -661,12 +657,10 @@ export class MediasoupService extends EventEmitter {
     }
 
     try {
-      // Stop recording if active
       if (room.recording) {
         await this.stopRecording(roomId);
       }
 
-      // Close router
       room.router.close();
 
       this.rooms.delete(roomId);
@@ -676,16 +670,6 @@ export class MediasoupService extends EventEmitter {
     }
   }
 
-  /**
-   * Get next available port
-   */
-  private getNextPort(): number {
-    return this.nextPort++;
-  }
-
-  /**
-   * Get room info
-   */
   getRoomInfo(roomId: string) {
     const room = this.rooms.get(roomId);
     if (!room) {
@@ -701,12 +685,10 @@ export class MediasoupService extends EventEmitter {
       peerCount: peers.length,
       recording: room.recording,
       recordingStartTime: room.recordingStartTime,
+      recordingPending: room.recordingPending,
     };
   }
 
-  /**
-   * Get all rooms
-   */
   getAllRooms() {
     return Array.from(this.rooms.keys()).map((roomId) =>
       this.getRoomInfo(roomId)

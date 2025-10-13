@@ -2,7 +2,6 @@ import { Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 
 class VideoCallController {
-  // Create a new room
   public createRoom = async (req: Request, res: Response): Promise<void> => {
     try {
       const { roomName, createdBy } = req.body;

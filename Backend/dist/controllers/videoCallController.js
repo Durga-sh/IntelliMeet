@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const uuid_1 = require("uuid");
 class VideoCallController {
     constructor() {
-        // Create a new room
         this.createRoom = async (req, res) => {
             try {
                 const { roomName, createdBy } = req.body;

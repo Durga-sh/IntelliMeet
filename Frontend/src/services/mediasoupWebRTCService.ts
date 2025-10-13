@@ -46,6 +46,11 @@ class MediasoupWebRTCService {
     this.device = new Device();
   }
 
+  // Set options (allow updating options after construction)
+  public setOptions(options: MediasoupServiceOptions): void {
+    this.options = { ...this.options, ...options };
+  }
+
   // Initialize connection
   public async connect(
     serverUrl: string = "http://localhost:5000"
@@ -59,17 +64,17 @@ class MediasoupWebRTCService {
 
       return new Promise((resolve, reject) => {
         this.socket!.on("connect", () => {
-          console.log("Connected to server");
+          console.log("✅ Connected to server, socket ID:", this.socket!.id);
           resolve();
         });
 
         this.socket!.on("connect_error", (error) => {
-          console.error("Connection error:", error);
+          console.error("❌ Connection error:", error);
           reject(error);
         });
       });
     } catch (error) {
-      console.error("Error connecting:", error);
+      console.error("❌ Error connecting:", error);
       throw error;
     }
   }
@@ -80,7 +85,7 @@ class MediasoupWebRTCService {
 
     // Room events
     this.socket.on("joined-room", (data) => {
-      console.log("Joined room:", data);
+      console.log("✅ Joined room:", data);
       this.roomId = data.roomId;
       this.currentUser = data.users.find(
         (u: MediasoupUser) => u.socketId === this.socket!.id
@@ -89,56 +94,56 @@ class MediasoupWebRTCService {
     });
 
     this.socket.on("user-joined", (data) => {
-      console.log("User joined:", data);
+      console.log("👋 User joined:", data);
       this.options.onUserJoined?.(data.user);
     });
 
     this.socket.on("user-left", (data) => {
-      console.log("User left:", data);
+      console.log("👋 User left:", data);
       this.cleanupConsumersByUserId(data.userId);
       this.options.onUserLeft?.(data.userId);
     });
 
     // Mediasoup events
     this.socket.on("routerRtpCapabilities", async (data) => {
-      console.log("Router RTP capabilities received");
+      console.log("📋 Router RTP capabilities received");
       try {
         await this.device!.load({
           routerRtpCapabilities: data.rtpCapabilities,
         });
+        console.log("✅ Device loaded with RTP capabilities");
         await this.createTransports();
-        // Device loaded, transports will be created when joining room
       } catch (error) {
-        console.error("Error loading device:", error);
+        console.error("❌ Error loading device:", error);
         this.options.onError?.(error);
       }
     });
 
     this.socket.on("webRtcTransportCreated", (data) => {
-      console.log("WebRTC transport created:", data);
+      console.log("🚚 WebRTC transport created:", data.direction);
       this.handleTransportCreated(data);
     });
 
     this.socket.on("webRtcTransportConnected", (data) => {
-      console.log("WebRTC transport connected:", data);
+      console.log("✅ WebRTC transport connected:", data.transportId);
     });
 
     this.socket.on("producerCreated", (data) => {
-      console.log("Producer created:", data);
+      console.log("🎬 Producer created:", data.producerId, data.kind);
     });
 
     this.socket.on("consumerCreated", async (data) => {
-      console.log("Consumer created:", data);
+      console.log("📺 Consumer created:", data.id);
       await this.handleConsumerCreated(data);
     });
 
     this.socket.on("consumerResumed", (data) => {
-      console.log("Consumer resumed:", data);
+      console.log("▶️ Consumer resumed:", data.consumerId);
     });
 
     // Recording events
     this.socket.on("recording-started", (data) => {
-      console.log("Recording started:", data);
+      console.log("🔴 Recording started:", data);
       this.options.onRecordingStarted?.(
         data.recordingId,
         new Date(data.startTime)
@@ -146,7 +151,7 @@ class MediasoupWebRTCService {
     });
 
     this.socket.on("recording-stopped", (data) => {
-      console.log("Recording stopped:", data);
+      console.log("⏹️ Recording stopped:", data);
       this.options.onRecordingStopped?.(
         data.recordingId,
         new Date(data.endTime)
@@ -155,14 +160,21 @@ class MediasoupWebRTCService {
 
     // User state changes
     this.socket.on("user-video-toggled", (data) => {
+      console.log("📹 User video toggled:", data.userId, data.isVideoEnabled);
       this.options.onUserVideoToggled?.(data.userId, data.isVideoEnabled);
     });
 
     this.socket.on("user-audio-toggled", (data) => {
+      console.log("🎤 User audio toggled:", data.userId, data.isAudioEnabled);
       this.options.onUserAudioToggled?.(data.userId, data.isAudioEnabled);
     });
 
     this.socket.on("user-screen-share-toggled", (data) => {
+      console.log(
+        "🖥️ User screen share toggled:",
+        data.userId,
+        data.isScreenSharing
+      );
       this.options.onUserScreenShareToggled?.(
         data.userId,
         data.isScreenSharing
@@ -171,7 +183,7 @@ class MediasoupWebRTCService {
 
     // Error handling
     this.socket.on("error", (data) => {
-      console.error("Server error:", data);
+      console.error("❌ Server error:", data);
       this.options.onError?.(data);
     });
   }
@@ -185,9 +197,11 @@ class MediasoupWebRTCService {
     this.roomId = roomId;
 
     // Get router RTP capabilities first
+    console.log("📋 Requesting router RTP capabilities...");
     this.socket.emit("getRouterRtpCapabilities", { roomId });
 
     // Join the room
+    console.log("🚪 Emitting join-room event...");
     this.socket.emit("join-room", {
       roomId,
       user: { name: userName },
@@ -196,15 +210,18 @@ class MediasoupWebRTCService {
 
   // Create transports
   private async createTransports(): Promise<void> {
-    if (!this.socket || !this.roomId) return;
+    if (!this.socket || !this.roomId) {
+      console.error("❌ Cannot create transports: no socket or roomId");
+      return;
+    }
 
-    // Create send transport
+    console.log("🚚 Creating send transport...");
     this.socket.emit("createWebRtcTransport", {
       roomId: this.roomId,
       direction: "send",
     });
 
-    // Create receive transport
+    console.log("🚚 Creating receive transport...");
     this.socket.emit("createWebRtcTransport", {
       roomId: this.roomId,
       direction: "recv",
@@ -215,6 +232,7 @@ class MediasoupWebRTCService {
   private async handleTransportCreated(data: any): Promise<void> {
     try {
       if (data.direction === "send") {
+        console.log("🚚 Creating send transport on client side...");
         this.sendTransport = this.device!.createSendTransport({
           id: data.id,
           iceParameters: data.iceParameters,
@@ -226,6 +244,7 @@ class MediasoupWebRTCService {
           "connect",
           async ({ dtlsParameters }: any, callback: any, errback: any) => {
             try {
+              console.log("🔗 Send transport connecting...");
               this.socket!.emit("connectWebRtcTransport", {
                 transportId: data.id,
                 dtlsParameters,
@@ -241,6 +260,7 @@ class MediasoupWebRTCService {
           "produce",
           async (parameters: any, callback: any, errback: any) => {
             try {
+              console.log("🎬 Producing:", parameters.kind);
               this.socket!.emit("createProducer", {
                 transportId: data.id,
                 kind: parameters.kind,
@@ -248,6 +268,10 @@ class MediasoupWebRTCService {
               });
 
               this.socket!.once("producerCreated", (producerData) => {
+                console.log(
+                  "✅ Producer created on server:",
+                  producerData.producerId
+                );
                 callback({ id: producerData.producerId });
               });
             } catch (error) {
@@ -255,7 +279,10 @@ class MediasoupWebRTCService {
             }
           }
         );
+
+        console.log("✅ Send transport setup complete");
       } else if (data.direction === "recv") {
+        console.log("🚚 Creating receive transport on client side...");
         this.recvTransport = this.device!.createRecvTransport({
           id: data.id,
           iceParameters: data.iceParameters,
@@ -267,6 +294,7 @@ class MediasoupWebRTCService {
           "connect",
           async ({ dtlsParameters }: any, callback: any, errback: any) => {
             try {
+              console.log("🔗 Receive transport connecting...");
               this.socket!.emit("connectWebRtcTransport", {
                 transportId: data.id,
                 dtlsParameters,
@@ -277,9 +305,11 @@ class MediasoupWebRTCService {
             }
           }
         );
+
+        console.log("✅ Receive transport setup complete");
       }
     } catch (error) {
-      console.error("Error handling transport creation:", error);
+      console.error("❌ Error handling transport creation:", error);
       this.options.onError?.(error);
     }
   }
@@ -290,31 +320,54 @@ class MediasoupWebRTCService {
     audio: boolean = true
   ): Promise<MediaStream> {
     try {
+      console.log("🎥 Requesting user media...");
       this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: video ? { width: 640, height: 480 } : false,
+        video: video ? { width: 1280, height: 720 } : false,
         audio: audio,
       });
 
-      // Produce media if transport is available
-      if (this.sendTransport) {
-        await this.produceMedia();
-      }
+      console.log("✅ Local media stream obtained");
+      console.log("📹 Video tracks:", this.localStream.getVideoTracks().length);
+      console.log("🎤 Audio tracks:", this.localStream.getAudioTracks().length);
+
+      // Wait for send transport to be ready
+      await this.waitForTransport();
+
+      // Produce media
+      await this.produceMedia();
 
       return this.localStream;
     } catch (error) {
-      console.error("Error starting local media:", error);
+      console.error("❌ Error starting local media:", error);
       throw error;
     }
   }
 
+  // Wait for transport to be ready
+  private async waitForTransport(maxWait: number = 5000): Promise<void> {
+    const startTime = Date.now();
+    while (!this.sendTransport && Date.now() - startTime < maxWait) {
+      console.log("⏳ Waiting for send transport...");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!this.sendTransport) {
+      throw new Error("Send transport not ready after waiting");
+    }
+    console.log("✅ Send transport is ready");
+  }
+
   // Produce media
   private async produceMedia(): Promise<void> {
-    if (!this.sendTransport || !this.localStream) return;
+    if (!this.sendTransport || !this.localStream) {
+      console.error("❌ Cannot produce media: no transport or stream");
+      return;
+    }
 
     try {
       // Produce video
       const videoTrack = this.localStream.getVideoTracks()[0];
       if (videoTrack) {
+        console.log("📹 Producing video track...");
         const videoProducer = await this.sendTransport.produce({
           track: videoTrack,
           codecOptions: {
@@ -322,27 +375,34 @@ class MediasoupWebRTCService {
           },
         });
         this.producers.set("video", videoProducer);
+        console.log("✅ Video producer created:", videoProducer.id);
       }
 
       // Produce audio
       const audioTrack = this.localStream.getAudioTracks()[0];
       if (audioTrack) {
+        console.log("🎤 Producing audio track...");
         const audioProducer = await this.sendTransport.produce({
           track: audioTrack,
         });
         this.producers.set("audio", audioProducer);
+        console.log("✅ Audio producer created:", audioProducer.id);
       }
     } catch (error) {
-      console.error("Error producing media:", error);
+      console.error("❌ Error producing media:", error);
       this.options.onError?.(error);
     }
   }
 
   // Handle consumer creation
   private async handleConsumerCreated(data: any): Promise<void> {
-    if (!this.recvTransport) return;
+    if (!this.recvTransport) {
+      console.error("❌ Cannot create consumer: no receive transport");
+      return;
+    }
 
     try {
+      console.log("📺 Creating consumer for:", data.kind);
       const consumer = await this.recvTransport.consume({
         id: data.id,
         producerId: data.producerId,
@@ -353,20 +413,25 @@ class MediasoupWebRTCService {
       this.consumers.set(data.id, consumer);
 
       // Resume consumer
+      console.log("▶️ Resuming consumer:", data.id);
       this.socket!.emit("resumeConsumer", { consumerId: data.id });
 
       // Create media stream
       const stream = new MediaStream([consumer.track]);
+      console.log("✅ Remote stream created for producer:", data.producerId);
       this.options.onRemoteStream?.(data.producerId, stream);
     } catch (error) {
-      console.error("Error handling consumer creation:", error);
+      console.error("❌ Error handling consumer creation:", error);
       this.options.onError?.(error);
     }
   }
 
   // Toggle video
   public async toggleVideo(): Promise<boolean> {
-    if (!this.currentUser) return false;
+    if (!this.currentUser) {
+      console.error("❌ Cannot toggle video: no current user");
+      return false;
+    }
 
     const videoProducer = this.producers.get("video");
     const newState = !this.currentUser.isVideoEnabled;
@@ -374,8 +439,10 @@ class MediasoupWebRTCService {
     if (videoProducer) {
       if (newState) {
         videoProducer.resume();
+        console.log("📹 Video resumed");
       } else {
         videoProducer.pause();
+        console.log("📹 Video paused");
       }
     }
 
@@ -387,7 +454,10 @@ class MediasoupWebRTCService {
 
   // Toggle audio
   public async toggleAudio(): Promise<boolean> {
-    if (!this.currentUser) return false;
+    if (!this.currentUser) {
+      console.error("❌ Cannot toggle audio: no current user");
+      return false;
+    }
 
     const audioProducer = this.producers.get("audio");
     const newState = !this.currentUser.isAudioEnabled;
@@ -395,8 +465,10 @@ class MediasoupWebRTCService {
     if (audioProducer) {
       if (newState) {
         audioProducer.resume();
+        console.log("🎤 Audio resumed");
       } else {
         audioProducer.pause();
+        console.log("🎤 Audio paused");
       }
     }
 
@@ -409,12 +481,14 @@ class MediasoupWebRTCService {
   // Start recording
   public startRecording(): void {
     if (!this.socket || !this.roomId) return;
+    console.log("🔴 Starting recording...");
     this.socket.emit("start-recording", { roomId: this.roomId });
   }
 
   // Stop recording
   public stopRecording(): void {
     if (!this.socket || !this.roomId) return;
+    console.log("⏹️ Stopping recording...");
     this.socket.emit("stop-recording", { roomId: this.roomId });
   }
 
@@ -427,6 +501,8 @@ class MediasoupWebRTCService {
   // Leave room
   public leaveRoom(): void {
     if (!this.socket) return;
+
+    console.log("👋 Leaving room...");
 
     // Close producers
     this.producers.forEach((producer) => producer.close());
@@ -451,10 +527,13 @@ class MediasoupWebRTCService {
     this.socket.emit("leave-room");
     this.currentUser = null;
     this.roomId = null;
+
+    console.log("✅ Left room");
   }
 
   // Disconnect
   public disconnect(): void {
+    console.log("🔌 Disconnecting...");
     this.leaveRoom();
     this.socket?.disconnect();
     this.socket = null;
@@ -462,8 +541,7 @@ class MediasoupWebRTCService {
 
   // Clean up consumers by user ID
   private cleanupConsumersByUserId(_userId: string): void {
-    // This would need to be implemented based on how you track user-consumer relationships
-    // For now, we'll clean up all consumers as a simple approach
+    // Clean up all consumers as a simple approach
     this.consumers.forEach((consumer, consumerId) => {
       consumer.close();
       this.consumers.delete(consumerId);
@@ -485,6 +563,10 @@ class MediasoupWebRTCService {
 
   public isConnected(): boolean {
     return this.socket?.connected || false;
+  }
+
+  public getSocket(): Socket | null {
+    return this.socket;
   }
 }
 

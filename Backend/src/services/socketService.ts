@@ -99,13 +99,34 @@ class SocketService {
       });
 
       // Get router RTP capabilities
-      socket.on("getRouterRtpCapabilities", ({ roomId }) => {
+      // Get router RTP capabilities - FIXED VERSION
+      socket.on("getRouterRtpCapabilities", async ({ roomId }) => {
         try {
+          console.log(`📋 Getting router RTP capabilities for room ${roomId}`);
+
+          // CRITICAL FIX: Create the mediasoup room first
+          await mediasoupService.createRoom(roomId);
+
+          // Now get the RTP capabilities
           const rtpCapabilities =
             mediasoupService.getRouterRtpCapabilities(roomId);
+
+          if (!rtpCapabilities) {
+            console.error(
+              `❌ Failed to get RTP capabilities for room ${roomId}`
+            );
+            socket.emit("error", {
+              message: "Failed to get router capabilities",
+            });
+            return;
+          }
+
+          console.log(`✅ Sending RTP capabilities for room ${roomId}`);
+          console.log(`   Codecs: ${rtpCapabilities.codecs?.length || 0}`);
+
           socket.emit("routerRtpCapabilities", { rtpCapabilities });
         } catch (error) {
-          console.error("Error getting router RTP capabilities:", error);
+          console.error("❌ Error getting router RTP capabilities:", error);
           socket.emit("error", {
             message: "Failed to get router capabilities",
           });

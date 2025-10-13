@@ -1,9 +1,8 @@
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import recordingService from "../services/recordingService";
 import s3Service from "../services/s3Service";
 import { isAuthenticated } from "../middleware/auth";
 
-// Interface for authenticated requests
 interface AuthenticatedRequest extends Request {
   user?: {
     _id: string;
@@ -15,100 +14,68 @@ interface AuthenticatedRequest extends Request {
 
 const router = Router();
 
-// Test endpoint - no auth required
-router.get("/test", async (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    message: "Recording API is working!",
-    timestamp: new Date().toISOString(),
-  });
-});
+// Error handler middleware
+const asyncHandler =
+  (fn: Function) => (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
 
-// Temporary endpoint to create rooms for testing - no auth required
-router.post("/create-room/:roomId", async (req: Request, res: Response) => {
-  try {
+// Test endpoint
+router.get(
+  "/test",
+  asyncHandler(async (req: Request, res: Response) => {
+    res.json({
+      success: true,
+      message: "Recording API is working!",
+      timestamp: new Date().toISOString(),
+    });
+  })
+);
+
+// Create room endpoint
+router.post(
+  "/create-room/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     const { roomId } = req.params;
     const mediasoupService = require("../services/mediasoupService").default;
 
-    await mediasoupService.createRoom(roomId);
-
-    res.json({
-      success: true,
-      message: `Room ${roomId} created successfully`,
-      roomId: roomId,
-    });
-  } catch (error: any) {
-    if (error.message && error.message.includes("already exists")) {
+    try {
+      await mediasoupService.createRoom(roomId);
       res.json({
         success: true,
-        message: `Room ${req.params.roomId} already exists`,
-        roomId: req.params.roomId,
+        message: `Room ${roomId} created successfully`,
+        roomId: roomId,
       });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: error.message || "Failed to create room",
-      });
+    } catch (error: any) {
+      if (error.message && error.message.includes("already exists")) {
+        res.json({
+          success: true,
+          message: `Room ${roomId} already exists`,
+          roomId: roomId,
+        });
+      } else {
+        throw error;
+      }
     }
-  }
-});
+  })
+);
 
-// Mock data for testing - no auth required
-router.get("/mock-status/:roomId", async (req: Request, res: Response) => {
-  const { roomId } = req.params;
-
-  // Return mock recording status for testing
-  const mockStatus = {
-    recording: {
-      id: `rec_${roomId}`,
-      roomId: roomId,
-      status: "recording", // Can be: recording, processing, completed, failed
-      startTime: new Date(Date.now() - 30000).toISOString(), // Started 30 seconds ago
-      endTime: null,
-      duration: null,
-      participants: ["user1", "user2"],
-    },
-    storage: {
-      isStored: false,
-      s3Url: null,
-      s3Key: null,
-      fileSize: 0,
-    },
-    progress: {
-      isRecording: true,
-      isProcessing: false,
-      isCompleted: false,
-      isFailed: false,
-      canDownload: false,
-    },
-  };
-
-  res.json({
-    success: true,
-    data: mockStatus,
-  });
-});
-
-// Get all recordings (temporarily disabled auth for testing)
-router.get("/", async (req: Request, res: Response) => {
-  try {
+// Get all recordings
+router.get(
+  "/",
+  asyncHandler(async (req: Request, res: Response) => {
     const recordings = recordingService.getAllRecordings();
     res.json({
       success: true,
       data: recordings,
     });
-  } catch (error) {
-    console.error("Error fetching recordings:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch recordings",
-    });
-  }
-});
+  })
+);
 
 // Get recording by room ID
-router.get("/room/:roomId", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/room/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     const { roomId } = req.params;
     const recording = recordingService.getRecording(roomId);
 
@@ -123,52 +90,37 @@ router.get("/room/:roomId", async (req: Request, res: Response) => {
       success: true,
       data: recording,
     });
-  } catch (error) {
-    console.error("Error fetching recording:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch recording",
-    });
-  }
-});
+  })
+);
 
 // Get completed recordings
-router.get("/completed", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/completed",
+  asyncHandler(async (req: Request, res: Response) => {
     const recordings = recordingService.getCompletedRecordings();
     res.json({
       success: true,
       data: recordings,
     });
-  } catch (error) {
-    console.error("Error fetching completed recordings:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch completed recordings",
-    });
-  }
-});
+  })
+);
 
 // Get active recordings
-router.get("/active", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/active",
+  asyncHandler(async (req: Request, res: Response) => {
     const recordings = recordingService.getActiveRecordings();
     res.json({
       success: true,
       data: recordings,
     });
-  } catch (error) {
-    console.error("Error fetching active recordings:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch active recordings",
-    });
-  }
-});
+  })
+);
 
 // Start recording
-router.post("/start/:roomId", async (req: Request, res: Response) => {
-  try {
+router.post(
+  "/start/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     console.log(
       "Recording start request received for room:",
       req.params.roomId
@@ -186,18 +138,13 @@ router.post("/start/:roomId", async (req: Request, res: Response) => {
       data: recording,
       message: "Recording started successfully",
     });
-  } catch (error: any) {
-    console.error("Error starting recording:", error);
-    res.status(400).json({
-      success: false,
-      message: error.message || "Failed to start recording",
-    });
-  }
-});
+  })
+);
 
 // Stop recording
-router.post("/stop/:roomId", async (req: Request, res: Response) => {
-  try {
+router.post(
+  "/stop/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     console.log("Recording stop request received for room:", req.params.roomId);
     const { roomId } = req.params;
 
@@ -208,16 +155,13 @@ router.post("/stop/:roomId", async (req: Request, res: Response) => {
       data: recording,
       message: "Recording stopped successfully",
     });
-  } catch (error: any) {
-    console.error("Error stopping recording:", error);
-    res.status(400).json({
-      success: false,
-      message: error.message || "Failed to stop recording",
-    });
-  }
-}); // Get download URL for recording
-router.get("/download/:roomId", async (req: Request, res: Response) => {
-  try {
+  })
+);
+
+// Get download URL for recording
+router.get(
+  "/download/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     const { roomId } = req.params;
     const { expiresIn = 3600 } = req.query;
 
@@ -233,38 +177,27 @@ router.get("/download/:roomId", async (req: Request, res: Response) => {
         expiresIn: parseInt(expiresIn as string),
       },
     });
-  } catch (error: any) {
-    console.error("Error getting download URL:", error);
-    res.status(404).json({
-      success: false,
-      message: error.message || "Failed to get download URL",
-    });
-  }
-});
+  })
+);
 
 // Delete recording
-router.delete("/:roomId", async (req: Request, res: Response) => {
-  try {
+router.delete(
+  "/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     const { roomId } = req.params;
-
     await recordingService.deleteRecording(roomId);
 
     res.json({
       success: true,
       message: "Recording deleted successfully",
     });
-  } catch (error: any) {
-    console.error("Error deleting recording:", error);
-    res.status(404).json({
-      success: false,
-      message: error.message || "Failed to delete recording",
-    });
-  }
-});
+  })
+);
 
 // Get recording status with detailed information
-router.get("/status/:roomId", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/status/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     const { roomId } = req.params;
     const recording = recordingService.getRecording(roomId);
 
@@ -275,7 +208,6 @@ router.get("/status/:roomId", async (req: Request, res: Response) => {
       });
     }
 
-    // Check if file exists in S3
     let isStored = false;
     let fileSize = 0;
 
@@ -318,18 +250,13 @@ router.get("/status/:roomId", async (req: Request, res: Response) => {
       success: true,
       data: statusResponse,
     });
-  } catch (error: any) {
-    console.error("Error fetching recording status:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to fetch recording status",
-    });
-  }
-});
+  })
+);
 
 // Check if recording is stored in cloud
-router.get("/storage/:roomId", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/storage/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     const { roomId } = req.params;
     const recording = recordingService.getRecording(roomId);
 
@@ -371,18 +298,13 @@ router.get("/storage/:roomId", async (req: Request, res: Response) => {
         },
       });
     }
-  } catch (error: any) {
-    console.error("Error checking storage status:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to check storage status",
-    });
-  }
-});
+  })
+);
 
 // Get recording progress
-router.get("/progress/:roomId", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/progress/:roomId",
+  asyncHandler(async (req: Request, res: Response) => {
     const { roomId } = req.params;
     const recording = recordingService.getRecording(roomId);
 
@@ -449,35 +371,25 @@ router.get("/progress/:roomId", async (req: Request, res: Response) => {
       success: true,
       data: progressData,
     });
-  } catch (error: any) {
-    console.error("Error fetching recording progress:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to fetch recording progress",
-    });
-  }
-});
+  })
+);
 
 // Get recording statistics
-router.get("/stats", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/stats",
+  asyncHandler(async (req: Request, res: Response) => {
     const stats = recordingService.getStatistics();
     res.json({
       success: true,
       data: stats,
     });
-  } catch (error) {
-    console.error("Error fetching recording statistics:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch recording statistics",
-    });
-  }
-});
+  })
+);
 
 // List S3 recordings
-router.get("/s3/list", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/s3/list",
+  asyncHandler(async (req: Request, res: Response) => {
     const { prefix = "recordings/" } = req.query;
     const files = await s3Service.listFiles(prefix as string);
 
@@ -485,55 +397,39 @@ router.get("/s3/list", async (req: Request, res: Response) => {
       success: true,
       data: files,
     });
-  } catch (error) {
-    console.error("Error listing S3 recordings:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to list S3 recordings",
-    });
-  }
-});
+  })
+);
 
 // Cleanup old recordings
-router.post("/cleanup", async (req: Request, res: Response) => {
-  try {
+router.post(
+  "/cleanup",
+  asyncHandler(async (req: Request, res: Response) => {
     const { daysOld = 30 } = req.body;
-
     await recordingService.cleanupOldRecordings(daysOld);
 
     res.json({
       success: true,
       message: `Cleaned up recordings older than ${daysOld} days`,
     });
-  } catch (error) {
-    console.error("Error cleaning up recordings:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to cleanup recordings",
-    });
-  }
-});
+  })
+);
 
 // Get upload queue status
-router.get("/upload-queue/status", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/upload-queue/status",
+  asyncHandler(async (req: Request, res: Response) => {
     const status = recordingService.getUploadQueueStatus();
     res.json({
       success: true,
       data: status,
     });
-  } catch (error) {
-    console.error("Error getting upload queue status:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to get upload queue status",
-    });
-  }
-});
+  })
+);
 
 // Manually trigger upload for a recording
-router.post("/upload/:recordingId", async (req: Request, res: Response) => {
-  try {
+router.post(
+  "/upload/:recordingId",
+  asyncHandler(async (req: Request, res: Response) => {
     const { recordingId } = req.params;
     const { priority = 5 } = req.body;
 
@@ -543,36 +439,26 @@ router.post("/upload/:recordingId", async (req: Request, res: Response) => {
       success: true,
       message: `Recording ${recordingId} queued for upload`,
     });
-  } catch (error: any) {
-    console.error("Error queuing recording for upload:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to queue recording for upload",
-    });
-  }
-});
+  })
+);
 
 // Retry failed uploads
-router.post("/upload/retry-failed", async (req: Request, res: Response) => {
-  try {
+router.post(
+  "/upload/retry-failed",
+  asyncHandler(async (req: Request, res: Response) => {
     await recordingService.retryFailedUploads();
 
     res.json({
       success: true,
       message: "Failed uploads have been re-queued",
     });
-  } catch (error) {
-    console.error("Error retrying failed uploads:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to retry failed uploads",
-    });
-  }
-});
+  })
+);
 
 // Get recordings by upload status
-router.get("/upload-status/:status", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/upload-status/:status",
+  asyncHandler(async (req: Request, res: Response) => {
     const { status } = req.params;
 
     if (
@@ -592,13 +478,18 @@ router.get("/upload-status/:status", async (req: Request, res: Response) => {
       success: true,
       data: recordings,
     });
-  } catch (error) {
-    console.error("Error getting recordings by upload status:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to get recordings by upload status",
-    });
-  }
+  })
+);
+
+// Global error handler for this router
+router.use((error: any, req: Request, res: Response, next: NextFunction) => {
+  console.error("Recording API Error:", error);
+
+  res.status(error.status || 500).json({
+    success: false,
+    message: error.message || "Internal server error",
+    error: process.env.NODE_ENV === "development" ? error.stack : undefined,
+  });
 });
 
 export default router;
