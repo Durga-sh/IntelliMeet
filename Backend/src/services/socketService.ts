@@ -124,7 +124,15 @@ class SocketService {
           console.log(`✅ Sending RTP capabilities for room ${roomId}`);
           console.log(`   Codecs: ${rtpCapabilities.codecs?.length || 0}`);
 
-          socket.emit("routerRtpCapabilities", { rtpCapabilities });
+          // Get existing producers for this room
+          const user = this.users.get(socket.id);
+          const existingProducers = user ? mediasoupService.getExistingProducers(roomId, user.id) : [];
+          console.log(`📺 Found ${existingProducers.length} existing producers for new peer`);
+
+          socket.emit("routerRtpCapabilities", { 
+            rtpCapabilities,
+            existingProducers
+          });
         } catch (error) {
           console.error("❌ Error getting router RTP capabilities:", error);
           socket.emit("error", {
@@ -193,6 +201,18 @@ class SocketService {
             );
 
             socket.emit("producerCreated", { producerId, kind });
+
+            // Notify other peers in the room about the new producer
+            const room = this.rooms.get(user.roomId);
+            if (room) {
+              console.log(`📢 Notifying other peers about new producer ${producerId} from ${user.name}`);
+              socket.to(user.roomId).emit("newProducer", {
+                producerId,
+                producerUserId: user.id,
+                producerUserName: user.name,
+                kind
+              });
+            }
           } catch (error) {
             console.error("Error creating producer:", error);
             socket.emit("error", { message: "Failed to create producer" });

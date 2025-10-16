@@ -113,6 +113,15 @@ class MediasoupWebRTCService {
         });
         console.log("✅ Device loaded with RTP capabilities");
         await this.createTransports();
+        
+        // Handle existing producers
+        if (data.existingProducers && data.existingProducers.length > 0) {
+          console.log("📺 Found existing producers:", data.existingProducers.length);
+          // Wait a bit for transports to be ready
+          setTimeout(() => {
+            this.createConsumersForExistingProducers(data.existingProducers);
+          }, 2000);
+        }
       } catch (error) {
         console.error("❌ Error loading device:", error);
         this.options.onError?.(error);
@@ -139,6 +148,21 @@ class MediasoupWebRTCService {
 
     this.socket.on("consumerResumed", (data) => {
       console.log("▶️ Consumer resumed:", data.consumerId);
+    });
+
+    // Handle new producer notifications
+    this.socket.on("newProducer", async (data) => {
+      console.log("🆕 New producer available:", data.producerId, "from user:", data.producerUserId);
+      
+      if (this.socket && this.device?.rtpCapabilities) {
+        console.log("📺 Creating consumer for new producer");
+        this.socket.emit("createConsumer", {
+          producerId: data.producerId,
+          rtpCapabilities: this.device.rtpCapabilities,
+        });
+      } else {
+        console.warn("❌ Cannot create consumer: device or socket not ready");
+      }
     });
 
     // Recording events
@@ -402,7 +426,7 @@ class MediasoupWebRTCService {
     }
 
     try {
-      console.log("📺 Creating consumer for:", data.kind);
+      console.log("📺 Creating consumer for:", data.kind, "from user:", data.producerUserId);
       const consumer = await this.recvTransport.consume({
         id: data.id,
         producerId: data.producerId,
@@ -418,8 +442,8 @@ class MediasoupWebRTCService {
 
       // Create media stream
       const stream = new MediaStream([consumer.track]);
-      console.log("✅ Remote stream created for producer:", data.producerId);
-      this.options.onRemoteStream?.(data.producerId, stream);
+      console.log("✅ Remote stream created for user:", data.producerUserId, "kind:", data.kind);
+      this.options.onRemoteStream?.(data.producerUserId, stream);
     } catch (error) {
       console.error("❌ Error handling consumer creation:", error);
       this.options.onError?.(error);
@@ -496,6 +520,28 @@ class MediasoupWebRTCService {
   public getRecordingStatus(): void {
     if (!this.socket || !this.roomId) return;
     this.socket.emit("get-recording-status", { roomId: this.roomId });
+  }
+
+  // Create consumers for existing producers
+  private async createConsumersForExistingProducers(existingProducers: any[]): Promise<void> {
+    if (!this.socket || !this.device?.rtpCapabilities) {
+      console.error("❌ Cannot create consumers: no socket or device capabilities");
+      return;
+    }
+
+    console.log("📺 Creating consumers for existing producers:", existingProducers.length);
+    
+    for (const producer of existingProducers) {
+      try {
+        console.log(`📺 Creating consumer for producer ${producer.producerId} from user ${producer.producerUserId}`);
+        this.socket.emit("createConsumer", {
+          producerId: producer.producerId,
+          rtpCapabilities: this.device.rtpCapabilities,
+        });
+      } catch (error) {
+        console.error(`❌ Error creating consumer for producer ${producer.producerId}:`, error);
+      }
+    }
   }
 
   // Leave room

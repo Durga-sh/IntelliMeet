@@ -35,10 +35,11 @@ interface RemoteVideo {
 const API_BASE_URL = 'http://localhost:5000';
 
 // Helper function to determine grid layout based on number of participants
-const getGridLayoutClass = (remoteCount: number): string => {
-  const totalParticipants = remoteCount + 1; // +1 for local user
+const getGridLayoutClass = (totalUsers: number): string => {
+  console.log("🎛️ Grid layout for", totalUsers, "total participants");
   
-  switch (totalParticipants) {
+  switch (totalUsers) {
+    case 0:
     case 1:
       return 'grid-1';
     case 2:
@@ -95,7 +96,12 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
           onUserLeft: (userId: string) => {
             console.log("👋 User left:", userId);
             setUsers(prev => prev.filter(u => u.id !== userId));
-            setRemoteVideos(prev => prev.filter(rv => rv.userId !== userId));
+            setRemoteVideos(prev => {
+              const filtered = prev.filter(rv => rv.userId !== userId);
+              // Clean up video element reference
+              remoteVideoRefs.current.delete(userId);
+              return filtered;
+            });
           },
           onUserVideoToggled: (userId: string, enabled: boolean) => {
             console.log(`📹 User ${userId} video:`, enabled);
@@ -116,14 +122,38 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
             ));
           },
           onRemoteStream: (userId: string, stream: MediaStream) => {
-            console.log("📺 Received remote stream from:", userId);
+            console.log("📺 Received remote stream from:", userId, "Tracks:", stream.getTracks().map(t => t.kind));
             setUsers(currentUsers => {
               const user = currentUsers.find(u => u.id === userId);
               if (user) {
                 setRemoteVideos(prev => {
-                  const filtered = prev.filter(rv => rv.userId !== userId);
-                  return [...filtered, { userId, stream, user }];
+                  const existingIndex = prev.findIndex(rv => rv.userId === userId);
+                  if (existingIndex >= 0) {
+                    // Merge tracks from new stream with existing stream
+                    const existing = prev[existingIndex];
+                    const existingTracks = existing.stream.getTracks();
+                    const newTracks = stream.getTracks();
+                    
+                    // Create a new stream with all tracks
+                    const mergedStream = new MediaStream();
+                    existingTracks.forEach(track => mergedStream.addTrack(track));
+                    newTracks.forEach(track => {
+                      if (!mergedStream.getTracks().find(t => t.kind === track.kind)) {
+                        mergedStream.addTrack(track);
+                      }
+                    });
+                    
+                    console.log("🔄 Merged stream for user:", userId, "Total tracks:", mergedStream.getTracks().length);
+                    const updated = [...prev];
+                    updated[existingIndex] = { ...existing, stream: mergedStream };
+                    return updated;
+                  } else {
+                    console.log("📺 Adding new remote video for user:", userId);
+                    return [...prev, { userId, stream, user }];
+                  }
                 });
+              } else {
+                console.warn("📺 User not found for remote stream:", userId);
               }
               return currentUsers;
             });
@@ -190,14 +220,29 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
   }, [roomId, userName]);
 
   useEffect(() => {
-    remoteVideos.forEach(({ userId, stream }) => {
-      const videoElement = remoteVideoRefs.current.get(userId);
-      if (videoElement) {
-        videoElement.srcObject = stream;
-        console.log("📺 Set remote video stream for user:", userId);
+    console.log("🔄 Updating remote video streams. Remote videos:", remoteVideos.length, "Users:", users.length);
+    
+    users.forEach((user) => {
+      const remoteVideo = remoteVideos.find(rv => rv.userId === user.id);
+      const videoElement = remoteVideoRefs.current.get(user.id);
+      
+      if (videoElement && remoteVideo && remoteVideo.stream) {
+        if (videoElement.srcObject !== remoteVideo.stream) {
+          videoElement.srcObject = remoteVideo.stream;
+          console.log("📺 Set remote video stream for user:", user.id, "Tracks:", remoteVideo.stream.getTracks().length);
+          
+          // Ensure the video plays
+          videoElement.play().catch((error) => {
+            console.log("📺 Auto-play blocked for remote video:", user.id, error);
+          });
+        }
+      } else if (!videoElement) {
+        console.warn("📺 Video element not found for user:", user.id);
+      } else if (!remoteVideo) {
+        console.warn("📺 No remote video found for user:", user.id);
       }
     });
-  }, [remoteVideos]);
+  }, [remoteVideos, users]);
 
   // Debug effect to check local video stream
   useEffect(() => {
@@ -456,7 +501,7 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
 
       {/* Video Area */}
       <div className={`flex-1 p-6 pb-28 transition-all duration-300 ${isChatVisible ? 'mr-80' : ''} min-h-0 overflow-hidden`}>
-        <div className={`video-grid ${getGridLayoutClass(remoteVideos.length)}`} style={{ height: '100%', maxHeight: 'calc(100vh - 200px)' }}>
+        <div className={`video-grid ${getGridLayoutClass(users.length + 1)}`} style={{ height: '100%', maxHeight: 'calc(100vh - 200px)' }}>
           
           {/* Local Video */}
           <div className="video-card">
@@ -497,48 +542,53 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
           </div>
 
           {/* Remote Videos */}
-          {remoteVideos.map(({ userId, user }) => (
-            <div key={userId} className="video-card">
-              <video
-                ref={(el) => {
-                  if (el) {
-                    remoteVideoRefs.current.set(userId, el);
-                  }
-                }}
-                autoPlay
-                playsInline
-                className="video-element"
-                style={{ 
-                  display: user.isVideoEnabled ? 'block' : 'none',
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover'
-                }}
-                onLoadedMetadata={() => console.log(`📹 Remote video metadata loaded for ${userId}`)}
-                onPlay={() => console.log(`📹 Remote video started playing for ${userId}`)}
-                onError={(e) => console.error(`📹 Remote video error for ${userId}:`, e)}
-              />
-              {!user.isVideoEnabled && (
-                <div className="video-placeholder">
-                  <div className="text-center">
-                    <VideoOff className="h-12 w-12 mx-auto mb-2 text-gray-400" />
-                    <p className="text-gray-400 font-medium">{user.name}</p>
-                    <p className="text-sm text-gray-500">Camera Off</p>
+          {users.map((user) => {
+            const remoteVideo = remoteVideos.find(rv => rv.userId === user.id);
+            return (
+              <div key={user.id} className="video-card">
+                <video
+                  ref={(el) => {
+                    if (el) {
+                      remoteVideoRefs.current.set(user.id, el);
+                    }
+                  }}
+                  autoPlay
+                  playsInline
+                  className="video-element"
+                  style={{ 
+                    display: user.isVideoEnabled && remoteVideo ? 'block' : 'none',
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain'
+                  }}
+                  onLoadedMetadata={() => console.log(`📹 Remote video metadata loaded for ${user.id}`)}
+                  onPlay={() => console.log(`📹 Remote video started playing for ${user.id}`)}
+                  onError={(e) => console.error(`📹 Remote video error for ${user.id}:`, e)}
+                />
+                {(!user.isVideoEnabled || !remoteVideo) && (
+                  <div className="video-placeholder">
+                    <div className="text-center">
+                      <VideoOff className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                      <p className="text-gray-400 font-medium">{user.name}</p>
+                      <p className="text-sm text-gray-500">
+                        {!remoteVideo ? 'Connecting...' : 'Camera Off'}
+                      </p>
+                    </div>
                   </div>
+                )}
+                <div className="video-overlay">
+                  {user.name} 
+                  {!user.isVideoEnabled && " (Video Off)"} 
+                  {!user.isAudioEnabled && " (Muted)"}
                 </div>
-              )}
-              <div className="video-overlay">
-                {user.name} 
-                {!user.isVideoEnabled && " (Video Off)"} 
-                {!user.isAudioEnabled && " (Muted)"}
+                {user.isScreenSharing && (
+                  <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs font-medium">
+                    Sharing Screen
+                  </div>
+                )}
               </div>
-              {user.isScreenSharing && (
-                <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs font-medium">
-                  Sharing Screen
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
 
           {/* Show placeholder for empty slots when only one participant */}
           {remoteVideos.length === 0 && (
