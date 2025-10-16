@@ -114,14 +114,7 @@ class MediasoupWebRTCService {
         console.log("✅ Device loaded with RTP capabilities");
         await this.createTransports();
         
-        // Handle existing producers
-        if (data.existingProducers && data.existingProducers.length > 0) {
-          console.log("📺 Found existing producers:", data.existingProducers.length);
-          // Wait a bit for transports to be ready
-          setTimeout(() => {
-            this.createConsumersForExistingProducers(data.existingProducers);
-          }, 2000);
-        }
+        // Note: Existing producers will be handled via separate "existingProducers" event
       } catch (error) {
         console.error("❌ Error loading device:", error);
         this.options.onError?.(error);
@@ -152,16 +145,55 @@ class MediasoupWebRTCService {
 
     // Handle new producer notifications
     this.socket.on("newProducer", async (data) => {
-      console.log("🆕 New producer available:", data.producerId, "from user:", data.producerUserId);
+      console.log("🆕 New producer available:", data.producerId, "kind:", data.kind, "from user:", data.producerUserId);
       
-      if (this.socket && this.device?.rtpCapabilities) {
-        console.log("📺 Creating consumer for new producer");
+      // Try immediate creation
+      if (this.socket && this.device?.rtpCapabilities && this.recvTransport) {
+        console.log("📺 Creating consumer for new producer immediately");
         this.socket.emit("createConsumer", {
           producerId: data.producerId,
           rtpCapabilities: this.device.rtpCapabilities,
         });
-      } else {
-        console.warn("❌ Cannot create consumer: device or socket not ready");
+        return;
+      }
+
+      // Wait for receive transport and try again
+      console.warn("❌ Receive transport not ready, waiting...");
+      const maxRetries = 5;
+      let retries = 0;
+      
+      const tryAgain = () => {
+        if (retries >= maxRetries) {
+          console.error("❌ Max retries reached for creating consumer");
+          return;
+        }
+        
+        retries++;
+        if (this.socket && this.device?.rtpCapabilities && this.recvTransport) {
+          console.log(`📺 Retry ${retries}: Creating consumer for producer ${data.producerId}`);
+          this.socket.emit("createConsumer", {
+            producerId: data.producerId,
+            rtpCapabilities: this.device.rtpCapabilities,
+          });
+        } else {
+          setTimeout(tryAgain, 1000);
+        }
+      };
+      
+      setTimeout(tryAgain, 1000);
+    });
+
+    // Handle existing producers notification
+    this.socket.on("existingProducers", async (data) => {
+      console.log("📺 Received existing producers notification:", data.existingProducers.length);
+      if (data.existingProducers && data.existingProducers.length > 0) {
+        try {
+          await this.waitForReceiveTransport();
+          console.log("📺 Creating consumers for existing producers");
+          this.createConsumersForExistingProducers(data.existingProducers);
+        } catch (error) {
+          console.error("❌ Error creating consumers for existing producers:", error);
+        }
       }
     });
 
@@ -380,6 +412,19 @@ class MediasoupWebRTCService {
     console.log("✅ Send transport is ready");
   }
 
+  // Wait for receive transport to be ready
+  private async waitForReceiveTransport(maxWait: number = 8000): Promise<void> {
+    const startTime = Date.now();
+    while (!this.recvTransport && Date.now() - startTime < maxWait) {
+      console.log("⏳ Waiting for receive transport...");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!this.recvTransport) {
+      throw new Error("Receive transport not ready after waiting");
+    }
+    console.log("✅ Receive transport is ready");
+  }
+
   // Produce media
   private async produceMedia(): Promise<void> {
     if (!this.sendTransport || !this.localStream) {
@@ -530,14 +575,18 @@ class MediasoupWebRTCService {
     }
 
     console.log("📺 Creating consumers for existing producers:", existingProducers.length);
+    console.log("📺 Existing producers details:", existingProducers);
     
     for (const producer of existingProducers) {
       try {
-        console.log(`📺 Creating consumer for producer ${producer.producerId} from user ${producer.producerUserId}`);
+        console.log(`📺 Creating consumer for producer ${producer.producerId} (${producer.kind}) from user ${producer.producerUserId}`);
         this.socket.emit("createConsumer", {
           producerId: producer.producerId,
           rtpCapabilities: this.device.rtpCapabilities,
         });
+        
+        // Add a small delay between requests
+        await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         console.error(`❌ Error creating consumer for producer ${producer.producerId}:`, error);
       }

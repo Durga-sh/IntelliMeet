@@ -60,6 +60,15 @@ class SocketService {
                         users: Array.from(room.users.values()),
                     });
                     console.log(`User ${newUser.name} joined room ${roomId}`);
+                    // After the user has joined, notify them about existing producers
+                    // This needs to happen after they get RTP capabilities and create transports
+                    setTimeout(() => {
+                        const existingProducers = mediasoupService_1.default.getExistingProducers(roomId, userId);
+                        if (existingProducers.length > 0) {
+                            console.log(`📢 Notifying ${newUser.name} about ${existingProducers.length} existing producers`);
+                            socket.emit("existingProducers", { existingProducers });
+                        }
+                    }, 3000); // Wait 3 seconds to ensure transports are ready
                 }
                 catch (error) {
                     console.error("Error joining room:", error);
@@ -84,7 +93,9 @@ class SocketService {
                     }
                     console.log(`✅ Sending RTP capabilities for room ${roomId}`);
                     console.log(`   Codecs: ${rtpCapabilities.codecs?.length || 0}`);
-                    socket.emit("routerRtpCapabilities", { rtpCapabilities });
+                    socket.emit("routerRtpCapabilities", {
+                        rtpCapabilities
+                    });
                 }
                 catch (error) {
                     console.error("❌ Error getting router RTP capabilities:", error);
@@ -132,6 +143,21 @@ class SocketService {
                         return;
                     const producerId = await mediasoupService_1.default.createProducer(user.id, transportId, rtpParameters, kind);
                     socket.emit("producerCreated", { producerId, kind });
+                    // Notify other peers in the room about the new producer
+                    const room = this.rooms.get(user.roomId);
+                    if (room) {
+                        console.log(`📢 Notifying ${room.users.size - 1} other peers about new producer ${producerId} (${kind}) from ${user.name}`);
+                        socket.to(user.roomId).emit("newProducer", {
+                            producerId,
+                            producerUserId: user.id,
+                            producerUserName: user.name,
+                            kind
+                        });
+                        console.log(`📢 Sent newProducer event for ${producerId} to room ${user.roomId}`);
+                    }
+                    else {
+                        console.warn(`❌ Room not found for user ${user.name}: ${user.roomId}`);
+                    }
                 }
                 catch (error) {
                     console.error("Error creating producer:", error);
@@ -144,11 +170,14 @@ class SocketService {
                     const user = this.users.get(socket.id);
                     if (!user)
                         return;
+                    console.log(`📺 Creating consumer for producer ${producerId} requested by ${user.name}`);
                     const consumerData = await mediasoupService_1.default.createConsumer(user.id, producerId, rtpCapabilities);
                     if (consumerData) {
+                        console.log(`✅ Consumer created: ${consumerData.id} for producer ${producerId} from user ${consumerData.producerUserId}`);
                         socket.emit("consumerCreated", consumerData);
                     }
                     else {
+                        console.log(`❌ Cannot consume producer ${producerId}`);
                         socket.emit("error", { message: "Cannot consume this producer" });
                     }
                 }

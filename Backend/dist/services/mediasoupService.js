@@ -198,14 +198,17 @@ class MediasoupService extends events_1.EventEmitter {
             throw new Error(`Room not found: ${peer.roomId}`);
         }
         let producer;
-        for (const [, p] of this.peers) {
+        let producerUserId;
+        for (const [userId, p] of this.peers) {
             if (p.roomId === peer.roomId) {
                 producer = p.producers.get(producerId);
-                if (producer)
+                if (producer) {
+                    producerUserId = userId;
                     break;
+                }
             }
         }
-        if (!producer) {
+        if (!producer || !producerUserId) {
             return null;
         }
         if (!room.router.canConsume({ producerId, rtpCapabilities })) {
@@ -225,9 +228,11 @@ class MediasoupService extends events_1.EventEmitter {
             consumer.on("transportclose", () => {
                 peer.consumers.delete(consumer.id);
             });
-            console.log(`Consumer created: ${consumer.id}`);
+            console.log(`Consumer created: ${consumer.id} for producer ${producerId} from user ${producerUserId}`);
             return {
                 id: consumer.id,
+                producerId,
+                producerUserId,
                 kind: consumer.kind,
                 rtpParameters: consumer.rtpParameters,
             };
@@ -254,6 +259,23 @@ class MediasoupService extends events_1.EventEmitter {
             console.error("Error resuming consumer:", error);
             throw error;
         }
+    }
+    // Get all existing producers in a room for a new peer
+    getExistingProducers(roomId, excludePeerId) {
+        const existingProducers = [];
+        for (const [userId, peer] of this.peers) {
+            if (peer.roomId === roomId && userId !== excludePeerId) {
+                for (const [producerId, producer] of peer.producers) {
+                    existingProducers.push({
+                        producerId,
+                        producerUserId: userId,
+                        kind: producer.kind
+                    });
+                }
+            }
+        }
+        console.log(`Found ${existingProducers.length} existing producers in room ${roomId}`);
+        return existingProducers;
     }
     async startRecording(roomId) {
         const room = this.rooms.get(roomId);

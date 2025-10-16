@@ -128,6 +128,8 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
               if (user) {
                 setRemoteVideos(prev => {
                   const existingIndex = prev.findIndex(rv => rv.userId === userId);
+                  let finalStream = stream;
+                  
                   if (existingIndex >= 0) {
                     // Merge tracks from new stream with existing stream
                     const existing = prev[existingIndex];
@@ -144,12 +146,35 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
                     });
                     
                     console.log("🔄 Merged stream for user:", userId, "Total tracks:", mergedStream.getTracks().length);
+                    finalStream = mergedStream;
                     const updated = [...prev];
-                    updated[existingIndex] = { ...existing, stream: mergedStream };
+                    updated[existingIndex] = { ...existing, stream: finalStream };
+                    
+                    // Immediately assign stream to video element
+                    setTimeout(() => {
+                      const videoElement = remoteVideoRefs.current.get(userId);
+                      if (videoElement && videoElement.srcObject !== finalStream) {
+                        videoElement.srcObject = finalStream;
+                        console.log("📺 Immediate stream assignment for user:", userId);
+                        videoElement.play().catch(err => console.log("Auto-play blocked:", err));
+                      }
+                    }, 10);
+                    
                     return updated;
                   } else {
                     console.log("📺 Adding new remote video for user:", userId);
-                    return [...prev, { userId, stream, user }];
+                    
+                    // Immediately assign stream to video element
+                    setTimeout(() => {
+                      const videoElement = remoteVideoRefs.current.get(userId);
+                      if (videoElement && videoElement.srcObject !== finalStream) {
+                        videoElement.srcObject = finalStream;
+                        console.log("📺 Immediate stream assignment for user:", userId);
+                        videoElement.play().catch(err => console.log("Auto-play blocked:", err));
+                      }
+                    }, 10);
+                    
+                    return [...prev, { userId, stream: finalStream, user }];
                   }
                 });
               } else {
@@ -219,30 +244,7 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
     };
   }, [roomId, userName]);
 
-  useEffect(() => {
-    console.log("🔄 Updating remote video streams. Remote videos:", remoteVideos.length, "Users:", users.length);
-    
-    users.forEach((user) => {
-      const remoteVideo = remoteVideos.find(rv => rv.userId === user.id);
-      const videoElement = remoteVideoRefs.current.get(user.id);
-      
-      if (videoElement && remoteVideo && remoteVideo.stream) {
-        if (videoElement.srcObject !== remoteVideo.stream) {
-          videoElement.srcObject = remoteVideo.stream;
-          console.log("📺 Set remote video stream for user:", user.id, "Tracks:", remoteVideo.stream.getTracks().length);
-          
-          // Ensure the video plays
-          videoElement.play().catch((error) => {
-            console.log("📺 Auto-play blocked for remote video:", user.id, error);
-          });
-        }
-      } else if (!videoElement) {
-        console.warn("📺 Video element not found for user:", user.id);
-      } else if (!remoteVideo) {
-        console.warn("📺 No remote video found for user:", user.id);
-      }
-    });
-  }, [remoteVideos, users]);
+  // Removed updateRemoteVideoStreams useEffect - streams are now handled directly in video ref callbacks
 
   // Debug effect to check local video stream
   useEffect(() => {
@@ -544,12 +546,25 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
           {/* Remote Videos */}
           {users.map((user) => {
             const remoteVideo = remoteVideos.find(rv => rv.userId === user.id);
+
             return (
               <div key={user.id} className="video-card">
                 <video
                   ref={(el) => {
                     if (el) {
-                      remoteVideoRefs.current.set(user.id, el);
+                      // Only set if it's actually different
+                      const existing = remoteVideoRefs.current.get(user.id);
+                      if (existing !== el) {
+                        remoteVideoRefs.current.set(user.id, el);
+                        // Immediately set stream if available
+                        const stream = remoteVideo?.stream;
+                        if (stream && el.srcObject !== stream) {
+                          el.srcObject = stream;
+                          el.play().catch(console.warn);
+                        }
+                      }
+                    } else {
+                      remoteVideoRefs.current.delete(user.id);
                     }
                   }}
                   autoPlay
@@ -561,7 +576,6 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
                     height: '100%',
                     objectFit: 'contain'
                   }}
-                  onLoadedMetadata={() => console.log(`📹 Remote video metadata loaded for ${user.id}`)}
                   onPlay={() => console.log(`📹 Remote video started playing for ${user.id}`)}
                   onError={(e) => console.error(`📹 Remote video error for ${user.id}:`, e)}
                 />
