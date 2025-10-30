@@ -55,9 +55,16 @@ class MediasoupWebRTCService {
   public async connect(
     serverUrl: string = "http://localhost:5000"
   ): Promise<void> {
+    // Prevent multiple connections
+    if (this.socket && this.socket.connected) {
+      console.log("✅ Already connected to server");
+      return;
+    }
+    
     try {
       this.socket = io(serverUrl, {
         transports: ["websocket"],
+        forceNew: true, // Force a new connection
       });
 
       this.setupSocketListeners();
@@ -108,10 +115,16 @@ class MediasoupWebRTCService {
     this.socket.on("routerRtpCapabilities", async (data) => {
       console.log("📋 Router RTP capabilities received");
       try {
-        await this.device!.load({
-          routerRtpCapabilities: data.rtpCapabilities,
-        });
-        console.log("✅ Device loaded with RTP capabilities");
+        // Check if device is already loaded
+        if (!this.device!.loaded) {
+          await this.device!.load({
+            routerRtpCapabilities: data.rtpCapabilities,
+          });
+          console.log("✅ Device loaded with RTP capabilities");
+        } else {
+          console.log("✅ Device already loaded, skipping load");
+        }
+        
         await this.createTransports();
         
         // Note: Existing producers will be handled via separate "existingProducers" event
@@ -145,7 +158,8 @@ class MediasoupWebRTCService {
 
     // Handle new producer notifications
     this.socket.on("newProducer", async (data) => {
-      console.log("🆕 New producer available:", data.producerId, "kind:", data.kind, "from user:", data.producerUserId);
+      const shareType = data.isScreenShare ? " (screen share)" : "";
+      console.log("🆕 New producer available:", data.producerId, "kind:", data.kind + shareType, "from user:", data.producerUserId);
       
       // Try immediate creation
       if (this.socket && this.device?.rtpCapabilities && this.recvTransport) {
@@ -271,6 +285,12 @@ class MediasoupWebRTCService {
       return;
     }
 
+    // Don't create transports if they already exist
+    if (this.sendTransport && this.recvTransport) {
+      console.log("✅ Transports already exist, skipping creation");
+      return;
+    }
+
     console.log("🚚 Creating send transport...");
     this.socket.emit("createWebRtcTransport", {
       roomId: this.roomId,
@@ -317,16 +337,24 @@ class MediasoupWebRTCService {
           async (parameters: any, callback: any, errback: any) => {
             try {
               console.log("🎬 Producing:", parameters.kind);
+              
+              // Determine if this is a screen share track
+              const isScreenShare = parameters.track?.label?.includes('screen') || 
+                                   parameters.appData?.isScreenShare || 
+                                   false;
+              
               this.socket!.emit("createProducer", {
                 transportId: data.id,
                 kind: parameters.kind,
                 rtpParameters: parameters.rtpParameters,
+                isScreenShare,
               });
 
               this.socket!.once("producerCreated", (producerData) => {
                 console.log(
                   "✅ Producer created on server:",
-                  producerData.producerId
+                  producerData.producerId,
+                  isScreenShare ? "(screen share)" : "(camera/mic)"
                 );
                 callback({ id: producerData.producerId });
               });
@@ -386,8 +414,8 @@ class MediasoupWebRTCService {
       console.log("📹 Video tracks:", this.localStream.getVideoTracks().length);
       console.log("🎤 Audio tracks:", this.localStream.getAudioTracks().length);
 
-      // Wait for send transport to be ready
-      await this.waitForTransport();
+      // Wait for send transport to be ready with a longer timeout
+      await this.waitForTransport(10000);
 
       // Produce media
       await this.produceMedia();
@@ -402,13 +430,29 @@ class MediasoupWebRTCService {
   // Wait for transport to be ready
   private async waitForTransport(maxWait: number = 5000): Promise<void> {
     const startTime = Date.now();
+    let attempts = 0;
+    
     while (!this.sendTransport && Date.now() - startTime < maxWait) {
-      console.log("⏳ Waiting for send transport...");
+      attempts++;
+      if (attempts % 10 === 0) { // Log every 1 second (10 * 100ms)
+        console.log(`⏳ Waiting for send transport... (attempt ${attempts}, ${Math.round((Date.now() - startTime) / 1000)}s)`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    
     if (!this.sendTransport) {
+      console.error("❌ Send transport not ready after waiting", {
+        attempts,
+        waitedMs: Date.now() - startTime,
+        device: !!this.device,
+        deviceLoaded: this.device?.loaded,
+        socket: !!this.socket,
+        socketConnected: this.socket?.connected,
+        roomId: this.roomId
+      });
       throw new Error("Send transport not ready after waiting");
     }
+    
     console.log("✅ Send transport is ready");
   }
 
@@ -547,6 +591,135 @@ class MediasoupWebRTCService {
     return newState;
   }
 
+  // Toggle screen sharing
+  public async toggleScreenShare(): Promise<boolean> {
+    if (!this.currentUser) {
+      console.error("❌ Cannot toggle screen share: no current user");
+      return false;
+    }
+
+    const newState = !this.currentUser.isScreenSharing;
+
+    try {
+      if (newState) {
+        // Start screen sharing
+        await this.startScreenShare();
+      } else {
+        // Stop screen sharing
+        await this.stopScreenShare();
+      }
+
+      this.currentUser.isScreenSharing = newState;
+      this.socket?.emit("toggle-screen-share", { isScreenSharing: newState });
+
+      console.log(`🖥️ Screen sharing ${newState ? 'started' : 'stopped'}`);
+      return newState;
+    } catch (error) {
+      console.error("❌ Error toggling screen share:", error);
+      throw error;
+    }
+  }
+
+  // Start screen sharing
+  private async startScreenShare(): Promise<void> {
+    try {
+      console.log("🖥️ Requesting screen capture...");
+      
+      // Get screen capture stream
+      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
+          frameRate: { ideal: 15, max: 30 }
+        },
+        audio: true // Include system audio if available
+      });
+
+      console.log("✅ Screen capture stream obtained");
+      console.log("🖥️ Screen tracks:", this.screenStream.getTracks().map(t => `${t.kind}: ${t.label}`));
+
+      // Handle screen share end (when user clicks stop sharing in browser)
+      this.screenStream.getVideoTracks()[0].addEventListener('ended', () => {
+        console.log("🖥️ Screen share ended by user");
+        this.stopScreenShare();
+        if (this.currentUser) {
+          this.currentUser.isScreenSharing = false;
+          this.socket?.emit("toggle-screen-share", { isScreenSharing: false });
+        }
+      });
+
+      // Wait for send transport to be ready
+      await this.waitForTransport(5000);
+
+      // Produce screen video
+      const screenVideoTrack = this.screenStream.getVideoTracks()[0];
+      if (screenVideoTrack) {
+        console.log("🖥️ Producing screen video track...");
+        const screenVideoProducer = await this.sendTransport.produce({
+          track: screenVideoTrack,
+          codecOptions: {
+            videoGoogleStartBitrate: 1000,
+          },
+          appData: { isScreenShare: true, type: 'screenVideo' }
+        });
+        this.producers.set("screenVideo", screenVideoProducer);
+        console.log("✅ Screen video producer created:", screenVideoProducer.id);
+      }
+
+      // Produce screen audio if available
+      const screenAudioTracks = this.screenStream.getAudioTracks();
+      if (screenAudioTracks.length > 0) {
+        console.log("🔊 Producing screen audio track...");
+        const screenAudioProducer = await this.sendTransport.produce({
+          track: screenAudioTracks[0],
+          appData: { isScreenShare: true, type: 'screenAudio' }
+        });
+        this.producers.set("screenAudio", screenAudioProducer);
+        console.log("✅ Screen audio producer created:", screenAudioProducer.id);
+      }
+    } catch (error) {
+      console.error("❌ Error starting screen share:", error);
+      throw error;
+    }
+  }
+
+  // Stop screen sharing
+  private async stopScreenShare(): Promise<void> {
+    try {
+      console.log("🖥️ Stopping screen share...");
+
+      // Close screen video producer
+      const screenVideoProducer = this.producers.get("screenVideo");
+      if (screenVideoProducer) {
+        screenVideoProducer.close();
+        this.producers.delete("screenVideo");
+        console.log("✅ Screen video producer closed");
+      }
+
+      // Close screen audio producer
+      const screenAudioProducer = this.producers.get("screenAudio");
+      if (screenAudioProducer) {
+        screenAudioProducer.close();
+        this.producers.delete("screenAudio");
+        console.log("✅ Screen audio producer closed");
+      }
+
+      // Stop screen stream tracks
+      if (this.screenStream) {
+        this.screenStream.getTracks().forEach((track) => {
+          track.stop();
+          console.log(`🛑 Stopped screen track: ${track.kind}`);
+        });
+        this.screenStream = null;
+      }
+
+      console.log("✅ Screen sharing stopped");
+    } catch (error) {
+      console.error("❌ Error stopping screen share:", error);
+      throw error;
+    }
+  }
+
   // Start recording
   public startRecording(): void {
     if (!this.socket || !this.roomId) return;
@@ -630,8 +803,35 @@ class MediasoupWebRTCService {
   public disconnect(): void {
     console.log("🔌 Disconnecting...");
     this.leaveRoom();
+    
+    // Clean up transports
+    if (this.sendTransport) {
+      this.sendTransport.close();
+      this.sendTransport = null;
+    }
+    
+    if (this.recvTransport) {
+      this.recvTransport.close();
+      this.recvTransport = null;
+    }
+    
+    // Clean up producers
+    this.producers.forEach((producer) => {
+      producer.close();
+    });
+    this.producers.clear();
+    
+    // Clean up consumers
+    this.consumers.forEach((consumer) => {
+      consumer.close();
+    });
+    this.consumers.clear();
+    
+    // Disconnect socket
     this.socket?.disconnect();
     this.socket = null;
+    
+    console.log("✅ Disconnected and cleaned up");
   }
 
   // Clean up consumers by user ID
@@ -650,6 +850,10 @@ class MediasoupWebRTCService {
 
   public getLocalStream(): MediaStream | null {
     return this.localStream;
+  }
+
+  public getScreenStream(): MediaStream | null {
+    return this.screenStream;
   }
 
   public getRoomId(): string | null {

@@ -8,7 +8,6 @@ import {
   MicOff, 
   Monitor, 
   MonitorOff, 
-  Phone, 
   PhoneOff,
   Users,
   Settings,
@@ -30,6 +29,7 @@ interface RemoteVideo {
   userId: string;
   stream: MediaStream;
   user: MediasoupUser;
+  isScreenShare?: boolean;
 }
 
 const API_BASE_URL = 'http://localhost:5000';
@@ -63,6 +63,7 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [users, setUsers] = useState<MediasoupUser[]>([]);
   const [remoteVideos, setRemoteVideos] = useState<RemoteVideo[]>([]);
+  const [screenShares, setScreenShares] = useState<RemoteVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
   
   const [isRecording, setIsRecording] = useState(false);
@@ -71,12 +72,23 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
 
   const [isChatVisible, setIsChatVisible] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [isInitializing, setIsInitializing] = useState(false);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const initializationRef = useRef<boolean>(false);
 
   useEffect(() => {
     const initializeCall = async () => {
+      // Prevent multiple initializations
+      if (initializationRef.current) {
+        console.log("⚠️ Initialization already in progress or completed");
+        return;
+      }
+      
+      initializationRef.current = true;
+      setIsInitializing(true);
+      
       try {
         // Set up event handlers
         webrtcService.setOptions({
@@ -102,6 +114,7 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
               remoteVideoRefs.current.delete(userId);
               return filtered;
             });
+            setScreenShares(prev => prev.filter(ss => ss.userId !== userId));
           },
           onUserVideoToggled: (userId: string, enabled: boolean) => {
             console.log(`📹 User ${userId} video:`, enabled);
@@ -122,66 +135,125 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
             ));
           },
           onRemoteStream: (userId: string, stream: MediaStream) => {
-            console.log("📺 Received remote stream from:", userId, "Tracks:", stream.getTracks().map(t => t.kind));
-            setUsers(currentUsers => {
-              const user = currentUsers.find(u => u.id === userId);
-              if (user) {
-                setRemoteVideos(prev => {
-                  const existingIndex = prev.findIndex(rv => rv.userId === userId);
-                  let finalStream = stream;
-                  
-                  if (existingIndex >= 0) {
-                    // Merge tracks from new stream with existing stream
-                    const existing = prev[existingIndex];
-                    const existingTracks = existing.stream.getTracks();
-                    const newTracks = stream.getTracks();
-                    
-                    // Create a new stream with all tracks
-                    const mergedStream = new MediaStream();
-                    existingTracks.forEach(track => mergedStream.addTrack(track));
-                    newTracks.forEach(track => {
-                      if (!mergedStream.getTracks().find(t => t.kind === track.kind)) {
-                        mergedStream.addTrack(track);
-                      }
-                    });
-                    
-                    console.log("🔄 Merged stream for user:", userId, "Total tracks:", mergedStream.getTracks().length);
-                    finalStream = mergedStream;
-                    const updated = [...prev];
-                    updated[existingIndex] = { ...existing, stream: finalStream };
-                    
-                    // Immediately assign stream to video element
-                    setTimeout(() => {
-                      const videoElement = remoteVideoRefs.current.get(userId);
-                      if (videoElement && videoElement.srcObject !== finalStream) {
-                        videoElement.srcObject = finalStream;
-                        console.log("📺 Immediate stream assignment for user:", userId);
-                        videoElement.play().catch(err => console.log("Auto-play blocked:", err));
-                      }
-                    }, 10);
-                    
-                    return updated;
-                  } else {
-                    console.log("📺 Adding new remote video for user:", userId);
-                    
-                    // Immediately assign stream to video element
-                    setTimeout(() => {
-                      const videoElement = remoteVideoRefs.current.get(userId);
-                      if (videoElement && videoElement.srcObject !== finalStream) {
-                        videoElement.srcObject = finalStream;
-                        console.log("📺 Immediate stream assignment for user:", userId);
-                        videoElement.play().catch(err => console.log("Auto-play blocked:", err));
-                      }
-                    }, 10);
-                    
-                    return [...prev, { userId, stream: finalStream, user }];
+            console.log("📺 Received remote stream from:", userId, "Tracks:", stream.getTracks().map(t => `${t.kind}: ${t.label}`));
+            
+            // Detect screen share based on track labels or constraints
+            const videoTrack = stream.getVideoTracks()[0];
+            const isScreenShare = videoTrack && (
+              videoTrack.label.includes('screen') || 
+              videoTrack.getSettings().displaySurface === 'monitor' ||
+              (videoTrack.getSettings().width && videoTrack.getSettings().width! > 1280)  // Screen shares typically have higher resolution
+            );
+            
+            if (isScreenShare) {
+              console.log("🖥️ Detected screen share stream from:", userId);
+              // Handle screen share streams separately
+              setScreenShares(prev => {
+                const existingIndex = prev.findIndex(ss => ss.userId === userId);
+                const user = users.find(u => u.id === userId);
+                
+                const screenShareVideo = {
+                  userId,
+                  stream,
+                  isScreenShare: true,
+                  user: user || {
+                    id: userId,
+                    name: `User ${userId}`,
+                    socketId: '',
+                    roomId: roomId,
+                    isVideoEnabled: true,
+                    isAudioEnabled: true,
+                    isScreenSharing: true
                   }
-                });
-              } else {
-                console.warn("📺 User not found for remote stream:", userId);
-              }
-              return currentUsers;
-            });
+                };
+                
+                if (existingIndex >= 0) {
+                  const updated = [...prev];
+                  updated[existingIndex] = screenShareVideo;
+                  return updated;
+                } else {
+                  return [...prev, screenShareVideo];
+                }
+              });
+            } else {
+              // Handle regular video/audio streams
+              setRemoteVideos(prev => {
+                const existingIndex = prev.findIndex(rv => rv.userId === userId);
+                
+                if (existingIndex >= 0) {
+                  // Update existing stream by merging tracks
+                  const existing = prev[existingIndex];
+                  const existingTracks = existing.stream.getTracks();
+                  const newTracks = stream.getTracks();
+                  
+                  // Create a new merged stream
+                  const mergedStream = new MediaStream();
+                  
+                  // Add all existing tracks first
+                  existingTracks.forEach(track => {
+                    if (track.readyState === 'live') {
+                      mergedStream.addTrack(track);
+                    }
+                  });
+                  
+                  // Add new tracks (replace if same kind, add if new)
+                  newTracks.forEach(newTrack => {
+                    if (newTrack.readyState === 'live') {
+                      const existingTrackOfSameKind = mergedStream.getTracks().find(t => t.kind === newTrack.kind);
+                      if (existingTrackOfSameKind) {
+                        mergedStream.removeTrack(existingTrackOfSameKind);
+                      }
+                      mergedStream.addTrack(newTrack);
+                    }
+                  });
+                  
+                  console.log("🔄 Merged stream for user:", userId, "Total tracks:", mergedStream.getTracks().length, "Kinds:", mergedStream.getTracks().map(t => t.kind));
+                  
+                  const updated = [...prev];
+                  updated[existingIndex] = { ...existing, stream: mergedStream };
+                  
+                  // Assign stream to video element immediately
+                  const videoElement = remoteVideoRefs.current.get(userId);
+                  if (videoElement) {
+                    videoElement.srcObject = mergedStream;
+                    videoElement.play().catch(err => console.log("Auto-play blocked for", userId, ":", err));
+                    console.log("📺 Updated stream assignment for user:", userId);
+                  }
+                  
+                  return updated;
+                } else {
+                  // Add new remote video entry
+                  console.log("📺 Adding new remote video for user:", userId);
+                  const user = users.find(u => u.id === userId);
+                  
+                  const newRemoteVideo = { 
+                    userId, 
+                    stream, 
+                    user: user || { 
+                      id: userId, 
+                      name: `User ${userId}`, 
+                      socketId: '', 
+                      roomId: roomId,
+                      isVideoEnabled: true, 
+                      isAudioEnabled: true, 
+                      isScreenSharing: false 
+                    } 
+                  };
+                  
+                  // Assign stream to video element immediately
+                  setTimeout(() => {
+                    const videoElement = remoteVideoRefs.current.get(userId);
+                    if (videoElement) {
+                      videoElement.srcObject = stream;
+                      videoElement.play().catch(err => console.log("Auto-play blocked for", userId, ":", err));
+                      console.log("📺 Initial stream assignment for user:", userId);
+                    }
+                  }, 50);
+                  
+                  return [...prev, newRemoteVideo];
+                }
+              });
+            }
           },
           onRecordingStarted: (recordingId: string, startTime: Date) => {
             console.log("🔴 Recording started:", recordingId, startTime);
@@ -233,6 +305,9 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
       } catch (err: any) {
         console.error("❌ Failed to initialize call:", err);
         setError(err.message || "Failed to join the call");
+        initializationRef.current = false; // Reset on error to allow retry
+      } finally {
+        setIsInitializing(false);
       }
     };
 
@@ -240,6 +315,7 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
 
     return () => {
       console.log("🧹 Cleaning up video call...");
+      initializationRef.current = false;
       webrtcService.disconnect();
     };
   }, [roomId, userName]);
@@ -256,6 +332,24 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
       });
     }
   }, [isVideoEnabled]);
+
+  // Effect to update remote video streams when remoteVideos state changes
+  useEffect(() => {
+    console.log("🔄 Remote videos state updated:", remoteVideos.length, "videos");
+    remoteVideos.forEach(({ userId, stream }) => {
+      const videoElement = remoteVideoRefs.current.get(userId);
+      if (videoElement && videoElement.srcObject !== stream) {
+        console.log(`📺 Updating video element stream for user ${userId}`);
+        videoElement.srcObject = stream;
+        videoElement.play().catch(err => console.log(`Auto-play blocked for ${userId}:`, err));
+      }
+    });
+  }, [remoteVideos]);
+
+  // Effect to handle screen share changes
+  useEffect(() => {
+    console.log("🖥️ Screen shares updated:", screenShares.length, "screen shares");
+  }, [screenShares]);
 
   const handleToggleVideo = async () => {
     try {
@@ -290,17 +384,12 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
 
   const handleToggleScreenShare = async () => {
     try {
-      if (isScreenSharing) {
-        // Stop screen sharing - not implemented in mediasoupWebRTCService yet
-        console.warn("⚠️ Screen sharing stop not implemented yet");
-        setIsScreenSharing(false);
-      } else {
-        // Start screen sharing - not implemented in mediasoupWebRTCService yet
-        console.warn("⚠️ Screen sharing not implemented yet");
-      }
+      const newState = await webrtcService.toggleScreenShare();
+      setIsScreenSharing(newState);
+      console.log("🖥️ Screen sharing toggled:", newState);
     } catch (err: any) {
       console.error("❌ Screen share error:", err);
-      setError("Failed to toggle screen sharing");
+      setError(`Failed to ${isScreenSharing ? 'stop' : 'start'} screen sharing: ${err.message}`);
     }
   };
 
@@ -459,16 +548,18 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
     );
   }
 
-  if (!isConnected) {
+  if (!isConnected || isInitializing) {
     return (
       <Card className="w-full max-w-md mx-auto mt-8">
         <CardHeader>
-          <CardTitle>Connecting...</CardTitle>
+          <CardTitle>{isInitializing ? "Initializing..." : "Connecting..."}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-center p-4">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-2">Joining room...</span>
+            <span className="ml-2">
+              {isInitializing ? "Setting up WebRTC..." : "Joining room..."}
+            </span>
           </div>
         </CardContent>
       </Card>
@@ -503,7 +594,41 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
 
       {/* Video Area */}
       <div className={`flex-1 p-6 pb-28 transition-all duration-300 ${isChatVisible ? 'mr-80' : ''} min-h-0 overflow-hidden`}>
-        <div className={`video-grid ${getGridLayoutClass(users.length + 1)}`} style={{ height: '100%', maxHeight: 'calc(100vh - 200px)' }}>
+        {/* Screen Share Section - Full Width if Active */}
+        {screenShares.length > 0 && (
+          <div className="mb-4">
+            <div className="grid grid-cols-1 gap-4">
+              {screenShares.map((screenShare) => (
+                <div key={`screen-${screenShare.userId}`} className="relative bg-gray-800 rounded-lg overflow-hidden" style={{ aspectRatio: '16/9', maxHeight: '60vh' }}>
+                  <video
+                    autoPlay
+                    playsInline
+                    muted={false}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      backgroundColor: '#1f2937'
+                    }}
+                    ref={(el) => {
+                      if (el && el.srcObject !== screenShare.stream) {
+                        el.srcObject = screenShare.stream;
+                        el.play().catch(console.warn);
+                      }
+                    }}
+                  />
+                  <div className="absolute top-4 left-4 bg-black bg-opacity-80 text-white px-3 py-2 rounded-lg flex items-center space-x-2">
+                    <Monitor className="h-5 w-5 text-green-400" />
+                    <span className="font-medium">{screenShare.user.name} is sharing their screen</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Regular Video Grid */}
+        <div className={`video-grid ${getGridLayoutClass(Math.max(users.length + 1, remoteVideos.length + 1))} ${screenShares.length > 0 ? 'opacity-75' : ''}`} style={{ height: screenShares.length > 0 ? '40%' : '100%', maxHeight: screenShares.length > 0 ? '300px' : 'calc(100vh - 200px)' }}>
           
           {/* Local Video */}
           <div className="video-card">
@@ -537,8 +662,9 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
               You {!isVideoEnabled && "(Video Off)"} {!isAudioEnabled && "(Muted)"}
             </div>
             {isScreenSharing && (
-              <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs font-medium">
-                Sharing Screen
+              <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs font-medium flex items-center space-x-1">
+                <Monitor className="h-3 w-3" />
+                <span>Sharing Screen</span>
               </div>
             )}
           </div>
@@ -546,21 +672,28 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
           {/* Remote Videos */}
           {users.map((user) => {
             const remoteVideo = remoteVideos.find(rv => rv.userId === user.id);
+            const hasVideoTrack = remoteVideo?.stream?.getVideoTracks().length ?? 0 > 0;
+            const hasAudioTrack = remoteVideo?.stream?.getAudioTracks().length ?? 0 > 0;
 
             return (
               <div key={user.id} className="video-card">
                 <video
                   ref={(el) => {
                     if (el) {
-                      // Only set if it's actually different
                       const existing = remoteVideoRefs.current.get(user.id);
                       if (existing !== el) {
+                        console.log(`📹 Setting up video element for user ${user.id}`);
                         remoteVideoRefs.current.set(user.id, el);
-                        // Immediately set stream if available
+                        
+                        // Set stream if available
                         const stream = remoteVideo?.stream;
-                        if (stream && el.srcObject !== stream) {
+                        if (stream) {
                           el.srcObject = stream;
-                          el.play().catch(console.warn);
+                          console.log(`📺 Assigned stream to video element for ${user.id}`, {
+                            videoTracks: stream.getVideoTracks().length,
+                            audioTracks: stream.getAudioTracks().length
+                          });
+                          el.play().catch(err => console.log(`Auto-play blocked for ${user.id}:`, err));
                         }
                       }
                     } else {
@@ -569,24 +702,32 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
                   }}
                   autoPlay
                   playsInline
+                  muted={false}
                   className="video-element"
                   style={{ 
-                    display: user.isVideoEnabled && remoteVideo ? 'block' : 'none',
+                    display: (user.isVideoEnabled && hasVideoTrack) ? 'block' : 'none',
                     width: '100%',
                     height: '100%',
-                    objectFit: 'contain'
+                    objectFit: 'contain',
+                    backgroundColor: '#1f2937'
                   }}
+                  onLoadedMetadata={() => console.log(`📹 Video metadata loaded for ${user.id}`)}
                   onPlay={() => console.log(`📹 Remote video started playing for ${user.id}`)}
+                  onCanPlay={() => console.log(`📹 Remote video can play for ${user.id}`)}
                   onError={(e) => console.error(`📹 Remote video error for ${user.id}:`, e)}
                 />
-                {(!user.isVideoEnabled || !remoteVideo) && (
+                {(!user.isVideoEnabled || !hasVideoTrack) && (
                   <div className="video-placeholder">
                     <div className="text-center">
                       <VideoOff className="h-12 w-12 mx-auto mb-2 text-gray-400" />
                       <p className="text-gray-400 font-medium">{user.name}</p>
                       <p className="text-sm text-gray-500">
-                        {!remoteVideo ? 'Connecting...' : 'Camera Off'}
+                        {!remoteVideo ? 'Connecting...' : 
+                         !hasVideoTrack ? 'No video stream' : 'Camera Off'}
                       </p>
+                      {hasAudioTrack && (
+                        <p className="text-xs text-green-400 mt-1">🎤 Audio connected</p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -594,6 +735,11 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
                   {user.name} 
                   {!user.isVideoEnabled && " (Video Off)"} 
                   {!user.isAudioEnabled && " (Muted)"}
+                  {remoteVideo && (
+                    <span className="text-xs ml-2">
+                      {hasVideoTrack ? '📹' : ''}{hasAudioTrack ? '🎤' : ''}
+                    </span>
+                  )}
                 </div>
                 {user.isScreenSharing && (
                   <div className="absolute top-2 right-2 bg-green-600 px-2 py-1 rounded text-xs font-medium">
@@ -604,14 +750,15 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
             );
           })}
 
-          {/* Show placeholder for empty slots when only one participant */}
-          {remoteVideos.length === 0 && (
+          {/* Show placeholder for empty slots when no remote participants */}
+          {users.length === 0 && (
             <div className="video-card">
               <div className="video-placeholder">
                 <div className="text-center text-gray-400">
                   <Users className="h-16 w-16 mx-auto mb-3" />
                   <p className="text-lg font-medium">Waiting for others to join...</p>
                   <p className="text-sm text-gray-500 mt-1">Share the room link to invite participants</p>
+                  <p className="text-xs text-gray-600 mt-2">Room ID: {roomId}</p>
                 </div>
               </div>
             </div>
@@ -644,9 +791,13 @@ const VideoCall: React.FC<VideoCallProps> = ({ roomId, userName, onLeaveCall }) 
 
           <Button
             onClick={handleToggleScreenShare}
-            variant={isScreenSharing ? "secondary" : "outline"}
+            variant={isScreenSharing ? "destructive" : "outline"}
             size="lg"
-            className="rounded-full w-12 h-12 sm:w-14 sm:h-14 transition-all hover:scale-105"
+            className={`rounded-full w-12 h-12 sm:w-14 sm:h-14 transition-all hover:scale-105 ${
+              isScreenSharing 
+                ? 'bg-green-600 hover:bg-green-700 border-green-600' 
+                : 'border-gray-500 hover:border-green-500'
+            }`}
             title={isScreenSharing ? "Stop screen sharing" : "Share screen"}
           >
             {isScreenSharing ? <MonitorOff className="h-5 w-5 sm:h-6 sm:w-6" /> : <Monitor className="h-5 w-5 sm:h-6 sm:w-6" />}

@@ -192,7 +192,7 @@ class SocketService {
       // Create producer
       socket.on(
         "createProducer",
-        async ({ transportId, kind, rtpParameters }) => {
+        async ({ transportId, kind, rtpParameters, isScreenShare }) => {
           try {
             const user = this.users.get(socket.id);
             if (!user) return;
@@ -204,17 +204,19 @@ class SocketService {
               kind
             );
 
-            socket.emit("producerCreated", { producerId, kind });
+            socket.emit("producerCreated", { producerId, kind, isScreenShare });
 
             // Notify other peers in the room about the new producer
             const room = this.rooms.get(user.roomId);
             if (room) {
-              console.log(`📢 Notifying ${room.users.size - 1} other peers about new producer ${producerId} (${kind}) from ${user.name}`);
+              const shareType = isScreenShare ? " (screen share)" : "";
+              console.log(`📢 Notifying ${room.users.size - 1} other peers about new producer ${producerId} (${kind}${shareType}) from ${user.name}`);
               socket.to(user.roomId).emit("newProducer", {
                 producerId,
                 producerUserId: user.id,
                 producerUserName: user.name,
-                kind
+                kind,
+                isScreenShare: isScreenShare || false
               });
               console.log(`📢 Sent newProducer event for ${producerId} to room ${user.roomId}`);
             } else {
