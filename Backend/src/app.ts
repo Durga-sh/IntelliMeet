@@ -18,7 +18,7 @@ connectDB();
 // Middlewares
 app.use(
   cors({
-    origin: "http://localhost:5173", // Your frontend URL
+    origin: "https://intelli-meet-three.vercel.app/", // Your frontend URL
     credentials: true,
   })
 );
