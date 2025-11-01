@@ -16,7 +16,12 @@ const server = createServer(app);
 // Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173", // Your frontend URL
+    origin: [
+      "http://localhost:5173", // Local development
+
+      "https://intelli-meet-three.vercel.app", // Deployed frontend
+      "https://intellimeet-lqb0.onrender.com" // Backend URL
+    ],
     methods: ["GET", "POST"],
     credentials: true,
   },
