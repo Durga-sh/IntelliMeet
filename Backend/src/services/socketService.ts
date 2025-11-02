@@ -1,947 +1,435 @@
-import { Server } from "socket.io";
-import { v4 as uuidv4 } from "uuid";
+import { Server, Socket } from "socket.io";
 import mediasoupService from "./mediasoupService";
-import recordingService from "./recordingService";
-import chatService from "./chatService";
-import {
-  RtpCapabilities,
-  DtlsParameters,
-  RtpParameters,
-} from "mediasoup/node/lib/types";
+import Room from "../models/Room";
+import ChatMessage from "../models/ChatMessage";
 
-interface User {
-  id: string;
-  socketId: string;
-  name: string;
+interface UserTyping {
+  userId: string;
+  userName: string;
   roomId: string;
-  isVideoEnabled: boolean;
-  isAudioEnabled: boolean;
-  isScreenSharing: boolean;
-}
-
-interface Room {
-  id: string;
-  users: Map<string, User>;
-  createdAt: Date;
 }
 
 class SocketService {
-  private io: Server;
-  private rooms: Map<string, Room> = new Map();
-  private users: Map<string, User> = new Map();
+  private io!: Server;
+  private typingUsers: Map<string, UserTyping> = new Map();
+  private userSockets: Map<string, string> = new Map(); // userId -> socketId
 
-  constructor(io: Server) {
+  initialize(io: Server) {
     this.io = io;
-    this.setupSocketHandlers();
-  }
 
-  private setupSocketHandlers() {
-    this.io.on("connection", (socket) => {
-      console.log(`User connected: ${socket.id}`);
+    io.on("connection", (socket: Socket) => {
+      console.log(`Client connected: ${socket.id}`);
 
-      // Join a room
-      socket.on("join-room", ({ roomId, user }) => {
+      // Join room
+      socket.on("join-room", async (data: { roomId: string; userName: string; userId: string }) => {
         try {
-          if (!roomId || roomId.trim() === "") {
-            console.log("Empty room ID received from client");
-            socket.emit("error", { message: "Room ID is required" });
-            return;
-          }
-
-          console.log(
-            `Join room request - Room ID: "${roomId}", User: "${user?.name}"`
-          );
-
-          const userId = uuidv4();
-          const newUser: User = {
-            id: userId,
-            socketId: socket.id,
-            name: user.name || `User ${socket.id.substring(0, 5)}`,
-            roomId,
-            isVideoEnabled: true,
-            isAudioEnabled: true,
-            isScreenSharing: false,
-          };
-
-          // Create room if it doesn't exist
-          if (!this.rooms.has(roomId)) {
-            this.rooms.set(roomId, {
-              id: roomId,
-              users: new Map(),
-              createdAt: new Date(),
-            });
-          }
-
-          const room = this.rooms.get(roomId)!;
-          room.users.set(userId, newUser);
-          this.users.set(socket.id, newUser);
-
+          const { roomId, userName, userId } = data;
+          
+          console.log(`Received join-room request:`, { roomId, userName, userId });
+          
           socket.join(roomId);
+          this.userSockets.set(userId, socket.id);
 
-          // Notify user they joined successfully
-          socket.emit("joined-room", {
-            roomId,
-            userId,
-            users: Array.from(room.users.values()),
-          });
+          // Add peer to mediasoup
+          mediasoupService.addPeer(socket.id, roomId, userName);
 
-          // Notify other users in the room
+          // Update room in database
+          await this.updateRoomParticipants(roomId, userId, userName, "join");
+
+          // Get router RTP capabilities
+          console.log(` Creating router for room ${roomId}...`);
+          const router = await mediasoupService.createRouter(roomId);
+          const rtpCapabilities = router.rtpCapabilities;
+          console.log(`Router created, RTP capabilities ready`);
+
+          // Notify others in the room
           socket.to(roomId).emit("user-joined", {
-            user: newUser,
-            users: Array.from(room.users.values()),
+            userId: socket.id,
+            userName,
           });
 
-          console.log(`User ${newUser.name} joined room ${roomId}`);
+          // Send router capabilities
+          console.log(` Sending router-rtp-capabilities to client...`);
+          socket.emit("router-rtp-capabilities", rtpCapabilities);
+          console.log(`Sent router-rtp-capabilities`);
 
-          // After the user has joined, notify them about existing producers
-          // This needs to happen after they get RTP capabilities and create transports
-          setTimeout(() => {
-            const existingProducers = mediasoupService.getExistingProducers(roomId, userId);
-            if (existingProducers.length > 0) {
-              console.log(`📢 Notifying ${newUser.name} about ${existingProducers.length} existing producers`);
-              socket.emit("existingProducers", { existingProducers });
-            }
-          }, 3000); // Wait 3 seconds to ensure transports are ready
+          // Send existing producers to new user
+          const producers = mediasoupService.getProducersByRoom(roomId);
+          console.log(`Sending ${producers.length} existing producers to new user:`, producers);
+          socket.emit("existing-producers", producers);
+
+          // Get room participants
+          const participants = mediasoupService.getRoomPeers(roomId).map((peer) => ({
+            id: peer.id,
+            userName: peer.userName,
+          }));
+
+          console.log(`📤 Sending ${participants.length} room participants...`);
+          socket.emit("room-participants", participants);
+
+          console.log(`User ${userName} joined room ${roomId} successfully`);
         } catch (error) {
           console.error("Error joining room:", error);
           socket.emit("error", { message: "Failed to join room" });
         }
       });
 
-      // Get router RTP capabilities
-      // Get router RTP capabilities - FIXED VERSION
-      socket.on("getRouterRtpCapabilities", async ({ roomId }) => {
-        try {
-          console.log(`📋 Getting router RTP capabilities for room ${roomId}`);
-
-          // CRITICAL FIX: Create the mediasoup room first
-          await mediasoupService.createRoom(roomId);
-
-          // Now get the RTP capabilities
-          const rtpCapabilities =
-            mediasoupService.getRouterRtpCapabilities(roomId);
-
-          if (!rtpCapabilities) {
-            console.error(
-              `❌ Failed to get RTP capabilities for room ${roomId}`
-            );
-            socket.emit("error", {
-              message: "Failed to get router capabilities",
-            });
-            return;
-          }
-
-          console.log(`✅ Sending RTP capabilities for room ${roomId}`);
-          console.log(`   Codecs: ${rtpCapabilities.codecs?.length || 0}`);
-
-          socket.emit("routerRtpCapabilities", { 
-            rtpCapabilities
-          });
-        } catch (error) {
-          console.error("❌ Error getting router RTP capabilities:", error);
-          socket.emit("error", {
-            message: "Failed to get router capabilities",
-          });
-        }
-      });
-
       // Create WebRTC transport
-      socket.on("createWebRtcTransport", async ({ roomId, direction }) => {
+      socket.on("create-transport", async (data: { roomId: string; direction: "send" | "recv" }) => {
         try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
+          const { roomId, direction } = data;
+          const transport = await mediasoupService.createWebRtcTransport(roomId, socket.id);
 
-          const transportOptions = await mediasoupService.createWebRtcTransport(
-            roomId,
-            user.id,
-            direction
-          );
-
-          socket.emit("webRtcTransportCreated", {
+          socket.emit("transport-created", {
             direction,
-            ...transportOptions,
+            transport,
           });
         } catch (error) {
-          console.error("Error creating WebRTC transport:", error);
+          console.error("Error creating transport:", error);
           socket.emit("error", { message: "Failed to create transport" });
         }
       });
 
-      // Connect WebRTC transport
-      socket.on(
-        "connectWebRtcTransport",
-        async ({ transportId, dtlsParameters }) => {
-          try {
-            const user = this.users.get(socket.id);
-            if (!user) return;
-
-            await mediasoupService.connectWebRtcTransport(
-              user.id,
-              transportId,
-              dtlsParameters
-            );
-
-            socket.emit("webRtcTransportConnected", { transportId });
-          } catch (error) {
-            console.error("Error connecting WebRTC transport:", error);
-            socket.emit("error", { message: "Failed to connect transport" });
-          }
-        }
-      );
-
-      // Create producer
-      socket.on(
-        "createProducer",
-        async ({ transportId, kind, rtpParameters, isScreenShare }) => {
-          try {
-            const user = this.users.get(socket.id);
-            if (!user) return;
-
-            const producerId = await mediasoupService.createProducer(
-              user.id,
-              transportId,
-              rtpParameters,
-              kind
-            );
-
-            socket.emit("producerCreated", { producerId, kind, isScreenShare });
-
-            // Notify other peers in the room about the new producer
-            const room = this.rooms.get(user.roomId);
-            if (room) {
-              const shareType = isScreenShare ? " (screen share)" : "";
-              console.log(`📢 Notifying ${room.users.size - 1} other peers about new producer ${producerId} (${kind}${shareType}) from ${user.name}`);
-              socket.to(user.roomId).emit("newProducer", {
-                producerId,
-                producerUserId: user.id,
-                producerUserName: user.name,
-                kind,
-                isScreenShare: isScreenShare || false
-              });
-              console.log(`📢 Sent newProducer event for ${producerId} to room ${user.roomId}`);
-            } else {
-              console.warn(`❌ Room not found for user ${user.name}: ${user.roomId}`);
-            }
-          } catch (error) {
-            console.error("Error creating producer:", error);
-            socket.emit("error", { message: "Failed to create producer" });
-          }
-        }
-      );
-
-      // Create consumer
-      socket.on("createConsumer", async ({ producerId, rtpCapabilities }) => {
+      // Connect transport
+      socket.on("connect-transport", async (data: { transportId: string; dtlsParameters: any }) => {
         try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
+          console.log(`📥 Received connect-transport request for transport:`, data.transportId);
+          const { transportId, dtlsParameters } = data;
+          await mediasoupService.connectTransport(socket.id, transportId, dtlsParameters);
+          console.log(`✅ Transport connected successfully`);
 
-          console.log(`📺 Creating consumer for producer ${producerId} requested by ${user.name}`);
-
-          const consumerData = await mediasoupService.createConsumer(
-            user.id,
-            producerId,
-            rtpCapabilities
-          );
-
-          if (consumerData) {
-            console.log(`✅ Consumer created: ${consumerData.id} for producer ${producerId} from user ${consumerData.producerUserId}`);
-            socket.emit("consumerCreated", consumerData);
-          } else {
-            console.log(`❌ Cannot consume producer ${producerId}`);
-            socket.emit("error", { message: "Cannot consume this producer" });
-          }
+          socket.emit("transport-connected", { transportId });
+          console.log(`📤 Sent transport-connected event`);
         } catch (error) {
-          console.error("Error creating consumer:", error);
-          socket.emit("error", { message: "Failed to create consumer" });
+          console.error("❌ Error connecting transport:", error);
+          socket.emit("error", { message: "Failed to connect transport" });
         }
       });
+
+      // Produce media
+      socket.on(
+        "produce",
+        async (data: {
+          transportId: string;
+          kind: "audio" | "video";
+          rtpParameters: any;
+          appData: any;
+        }) => {
+          try {
+            console.log(`📥 Received produce request for ${data.kind}`);
+            const { transportId, kind, rtpParameters, appData } = data;
+            const producerId = await mediasoupService.produce(
+              socket.id,
+              transportId,
+              kind,
+              rtpParameters,
+              appData
+            );
+            console.log(`✅ Producer created for ${kind}, ID: ${producerId}`);
+
+            socket.emit("produced", { producerId });
+            console.log(`📤 Sent 'produced' event back to client`);
+
+            // Notify other peers about new producer
+            const peer = mediasoupService.getPeer(socket.id);
+            if (peer) {
+              socket.to(peer.roomId).emit("new-producer", {
+                producerId,
+                peerId: socket.id,
+                kind,
+              });
+            }
+          } catch (error) {
+            console.error("Error producing:", error);
+            socket.emit("error", { message: "Failed to produce media" });
+          }
+        }
+      );
+
+      // Consume media
+      socket.on(
+        "consume",
+        async (data: { transportId: string; producerId: string; rtpCapabilities: any }) => {
+          try {
+            const { transportId, producerId, rtpCapabilities } = data;
+            const consumerData = await mediasoupService.consume(
+              socket.id,
+              transportId,
+              producerId,
+              rtpCapabilities
+            );
+
+            socket.emit("consumed", consumerData);
+          } catch (error) {
+            console.error("Error consuming:", error);
+            socket.emit("error", { message: "Failed to consume media" });
+          }
+        }
+      );
 
       // Resume consumer
-      socket.on("resumeConsumer", async ({ consumerId }) => {
+      socket.on("resume-consumer", async (data: { consumerId: string }) => {
         try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
+          console.log(`📥 Received resume-consumer request for ${data.consumerId}`);
+          const { consumerId } = data;
+          await mediasoupService.resumeConsumer(socket.id, consumerId);
+          console.log(`✅ Consumer resumed successfully`);
 
-          await mediasoupService.resumeConsumer(user.id, consumerId);
-          socket.emit("consumerResumed", { consumerId });
+          socket.emit("resumed", { consumerId });
+          console.log(`📤 Sent 'resumed' event`);
         } catch (error) {
-          console.error("Error resuming consumer:", error);
-          socket.emit("error", { message: "Failed to resume consumer" });
+          console.error("❌ Error resuming consumer:", error);
         }
       });
 
-      // Handle offer
-      socket.on("webrtc-offer", ({ targetUserId, offer }) => {
+      // Pause/Resume producer
+      socket.on("pause-producer", async (data: { producerId: string }) => {
         try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
+          const { producerId } = data;
+          await mediasoupService.pauseProducer(socket.id, producerId);
 
-          const room = this.rooms.get(user.roomId);
-          if (!room) return;
-
-          const targetUser = Array.from(room.users.values()).find(
-            (u) => u.id === targetUserId
-          );
-
-          if (targetUser) {
-            this.io.to(targetUser.socketId).emit("webrtc-offer", {
-              fromUserId: user.id,
-              offer,
+          const peer = mediasoupService.getPeer(socket.id);
+          if (peer) {
+            socket.to(peer.roomId).emit("producer-paused", {
+              producerId,
+              peerId: socket.id,
             });
           }
         } catch (error) {
-          console.error("Error handling WebRTC offer:", error);
+          console.error("Error pausing producer:", error);
         }
       });
 
-      // Handle answer
-      socket.on("webrtc-answer", ({ targetUserId, answer }) => {
+      socket.on("resume-producer", async (data: { producerId: string }) => {
         try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
+          const { producerId } = data;
+          await mediasoupService.resumeProducer(socket.id, producerId);
 
-          const room = this.rooms.get(user.roomId);
-          if (!room) return;
-
-          const targetUser = Array.from(room.users.values()).find(
-            (u) => u.id === targetUserId
-          );
-
-          if (targetUser) {
-            this.io.to(targetUser.socketId).emit("webrtc-answer", {
-              fromUserId: user.id,
-              answer,
+          const peer = mediasoupService.getPeer(socket.id);
+          if (peer) {
+            socket.to(peer.roomId).emit("producer-resumed", {
+              producerId,
+              peerId: socket.id,
             });
           }
         } catch (error) {
-          console.error("Error handling WebRTC answer:", error);
+          console.error("Error resuming producer:", error);
         }
       });
 
-      // Handle ICE candidate
-      socket.on("webrtc-ice-candidate", ({ targetUserId, candidate }) => {
+      // Close producer
+      socket.on("close-producer", async (data: { producerId: string }) => {
         try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
+          const { producerId } = data;
+          mediasoupService.closeProducer(socket.id, producerId);
 
-          const room = this.rooms.get(user.roomId);
-          if (!room) return;
-
-          const targetUser = Array.from(room.users.values()).find(
-            (u) => u.id === targetUserId
-          );
-
-          if (targetUser) {
-            this.io.to(targetUser.socketId).emit("webrtc-ice-candidate", {
-              fromUserId: user.id,
-              candidate,
+          const peer = mediasoupService.getPeer(socket.id);
+          if (peer) {
+            socket.to(peer.roomId).emit("producer-closed", {
+              producerId,
+              peerId: socket.id,
             });
           }
         } catch (error) {
-          console.error("Error handling ICE candidate:", error);
+          console.error("Error closing producer:", error);
         }
       });
 
-      // Toggle video
-      socket.on("toggle-video", ({ isVideoEnabled }) => {
+      // Chat messages
+      socket.on("send-message", async (data: { roomId: string; message: string; userName: string; userId: string }) => {
         try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
+          const { roomId, message, userName, userId } = data;
 
-          user.isVideoEnabled = isVideoEnabled;
-          const room = this.rooms.get(user.roomId);
-          if (!room) return;
-
-          socket.to(user.roomId).emit("user-video-toggled", {
-            userId: user.id,
-            isVideoEnabled,
-          });
-        } catch (error) {
-          console.error("Error toggling video:", error);
-        }
-      });
-
-      // Toggle audio
-      socket.on("toggle-audio", ({ isAudioEnabled }) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
-
-          user.isAudioEnabled = isAudioEnabled;
-          const room = this.rooms.get(user.roomId);
-          if (!room) return;
-
-          socket.to(user.roomId).emit("user-audio-toggled", {
-            userId: user.id,
-            isAudioEnabled,
-          });
-        } catch (error) {
-          console.error("Error toggling audio:", error);
-        }
-      });
-
-      // Toggle screen sharing
-      socket.on("toggle-screen-share", ({ isScreenSharing }) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
-
-          user.isScreenSharing = isScreenSharing;
-          const room = this.rooms.get(user.roomId);
-          if (!room) return;
-
-          socket.to(user.roomId).emit("user-screen-share-toggled", {
-            userId: user.id,
-            isScreenSharing,
-          });
-        } catch (error) {
-          console.error("Error toggling screen share:", error);
-        }
-      });
-
-      // Start recording
-      socket.on("start-recording", async ({ roomId }) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user || user.roomId !== roomId) return;
-
-          const room = this.rooms.get(roomId);
-          if (!room) return;
-
-          const participants = Array.from(room.users.values()).map(
-            (u) => u.name
-          );
-          const recording = await recordingService.startRecording(
+          // Save message to database
+          const chatMessage = new ChatMessage({
             roomId,
-            participants
-          );
+            senderId: userId,
+            senderName: userName,
+            message,
+            timestamp: new Date(),
+          });
 
-          this.io.to(roomId).emit("recording-started", {
-            recordingId: recording.id,
-            startTime: recording.startTime,
+          await chatMessage.save();
+
+          // Broadcast to room
+          this.io.to(roomId).emit("new-message", {
+            id: chatMessage._id,
+            senderId: userId,
+            senderName: userName,
+            message,
+            timestamp: chatMessage.timestamp,
+          });
+
+          // Send delivery receipts
+          const roomParticipants = mediasoupService.getRoomPeers(roomId);
+          const deliveredTo = roomParticipants
+            .filter((p) => p.id !== socket.id)
+            .map((p) => p.id);
+
+          chatMessage.deliveredTo = deliveredTo;
+          chatMessage.delivered = true;
+          await chatMessage.save();
+
+          socket.emit("message-delivered", {
+            messageId: chatMessage._id,
+            deliveredTo,
           });
         } catch (error) {
-          console.error("Error starting recording:", error);
-          socket.emit("error", { message: "Failed to start recording" });
+          console.error("Error sending message:", error);
+          socket.emit("error", { message: "Failed to send message" });
         }
       });
 
-      // Stop recording
-      socket.on("stop-recording", async ({ roomId }) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user || user.roomId !== roomId) return;
+      // Typing indicators
+      socket.on("typing-start", (data: { roomId: string; userName: string; userId: string }) => {
+        const { roomId, userName, userId } = data;
+        
+        this.typingUsers.set(socket.id, { userId, userName, roomId });
+        
+        socket.to(roomId).emit("user-typing", {
+          userId,
+          userName,
+        });
+      });
 
-          const recording = await recordingService.stopRecording(roomId);
-          if (recording) {
-            this.io.to(roomId).emit("recording-stopped", {
-              recordingId: recording.id,
-              endTime: new Date(),
+      socket.on("typing-stop", (data: { roomId: string; userId: string }) => {
+        const { roomId, userId } = data;
+        
+        this.typingUsers.delete(socket.id);
+        
+        socket.to(roomId).emit("user-stopped-typing", {
+          userId,
+        });
+      });
+
+      // Message read receipts
+      socket.on("message-read", async (data: { messageId: string; userId: string }) => {
+        try {
+          const { messageId, userId } = data;
+
+          const message = await ChatMessage.findById(messageId);
+          if (message && !message.readBy.includes(userId)) {
+            message.readBy.push(userId);
+            await message.save();
+
+            this.io.to(message.roomId).emit("message-read-receipt", {
+              messageId,
+              userId,
             });
-          }
-        } catch (error) {
-          console.error("Error stopping recording:", error);
-          socket.emit("error", { message: "Failed to stop recording" });
-        }
-      });
-
-      // Get recording status
-      socket.on("get-recording-status", ({ roomId }) => {
-        try {
-          const recording = recordingService.getRecording(roomId);
-          socket.emit("recording-status", {
-            recording: recording
-              ? {
-                  id: recording.id,
-                  status: recording.status,
-                  startTime: recording.startTime,
-                  endTime: recording.endTime,
-                  duration: recording.duration,
-                }
-              : null,
-          });
-        } catch (error) {
-          console.error("Error getting recording status:", error);
-          socket.emit("error", { message: "Failed to get recording status" });
-        }
-      });
-
-      // ========== ENHANCED CHAT FUNCTIONALITY ==========
-
-      // Send chat message
-      socket.on("chat-send-message", async (data) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) {
-            socket.emit("chat-error", { message: "User not found" });
-            return;
-          }
-
-          console.log("Chat message received:", {
-            from: user.name,
-            roomId: user.roomId,
-            messageType: data.messageType || "text",
-            message: data.message,
-          });
-
-          // Validate message content
-          if (!data.message || !data.message.trim()) {
-            console.log("Empty message rejected");
-            socket.emit("chat-error", { message: "Message cannot be empty" });
-            return;
-          }
-
-          // Stop typing indicator when message is sent
-          chatService.setTyping(user.roomId, user.id, user.name, false);
-
-          const message = await chatService.sendMessage({
-            roomId: user.roomId,
-            userId: user.id,
-            userName: user.name,
-            message: data.message,
-            messageType: data.messageType || "text",
-            replyTo: data.replyTo,
-            fileInfo: data.fileInfo,
-          });
-
-          // Convert to plain object for transmission
-          const messageObj = {
-            id: message.id,
-            roomId: message.roomId,
-            userId: message.userId,
-            userName: message.userName,
-            message: message.message,
-            messageType: message.messageType,
-            timestamp: message.timestamp,
-            deliveredTo: message.deliveredTo,
-            readBy: message.readBy,
-            isEdited: message.isEdited,
-            editedAt: message.editedAt,
-            replyTo: message.replyTo,
-            reactions: message.reactions,
-            fileInfo: message.fileInfo,
-          };
-
-          console.log("Broadcasting message to room:", user.roomId);
-          console.log("Message object:", messageObj);
-          console.log(
-            "Room users:",
-            Array.from(this.rooms.get(user.roomId)?.users.values() || []).map(
-              (u) => u.name
-            )
-          );
-
-          // Broadcast message to all users in the room (including sender)
-          this.io.to(user.roomId).emit("chat-message-received", {
-            message: messageObj,
-          });
-
-          // Mark as delivered for all users in the room except sender
-          const room = this.rooms.get(user.roomId);
-          if (room) {
-            const otherUsers = Array.from(room.users.values()).filter(
-              (u) => u.id !== user.id
-            );
-
-            for (const otherUser of otherUsers) {
-              await chatService.markAsDelivered(message.id, otherUser.id);
-            }
-
-            // Notify sender that message was delivered
-            socket.emit("chat-message-delivered", {
-              messageId: message.id,
-              deliveredCount: otherUsers.length,
-            });
-          }
-        } catch (error) {
-          console.error("Error sending chat message:", error);
-          socket.emit("chat-error", {
-            message: "Failed to send message",
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
-        }
-      });
-
-      // Get chat history
-      socket.on("chat-get-messages", async (data) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) {
-            socket.emit("chat-error", { message: "User not found" });
-            return;
-          }
-
-          const limit = data?.limit || 50;
-          const before = data?.before ? new Date(data.before) : undefined;
-
-          console.log(`Loading ${limit} messages for room ${user.roomId}`);
-
-          const messages = await chatService.getMessages(
-            user.roomId,
-            limit,
-            before
-          );
-
-          socket.emit("chat-messages-history", {
-            messages,
-            roomId: user.roomId,
-            count: messages.length,
-          });
-
-          console.log(`Sent ${messages.length} messages to ${user.name}`);
-        } catch (error) {
-          console.error("Error getting chat messages:", error);
-          socket.emit("chat-error", { message: "Failed to get messages" });
-        }
-      });
-
-      // Mark message as read
-      socket.on("chat-mark-read", async (data) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
-
-          if (Array.isArray(data.messageIds)) {
-            // Mark multiple messages as read
-            const count = await chatService.markMessagesAsRead(
-              data.messageIds,
-              user.id
-            );
-
-            if (count > 0) {
-              // Notify other users in the room about read receipts
-              socket.to(user.roomId).emit("chat-messages-read", {
-                messageIds: data.messageIds,
-                userId: user.id,
-                userName: user.name,
-                readAt: new Date(),
-                count,
-              });
-            }
-          } else if (data.messageId) {
-            // Mark single message as read
-            const success = await chatService.markAsRead(
-              data.messageId,
-              user.id
-            );
-
-            if (success) {
-              socket.to(user.roomId).emit("chat-message-read", {
-                messageId: data.messageId,
-                userId: user.id,
-                userName: user.name,
-                readAt: new Date(),
-              });
-            }
           }
         } catch (error) {
           console.error("Error marking message as read:", error);
         }
       });
 
-      // Edit message
-      socket.on("chat-edit-message", async (data) => {
+      // Get chat history
+      socket.on("get-chat-history", async (data: { roomId: string; limit?: number }) => {
         try {
-          const user = this.users.get(socket.id);
-          if (!user) {
-            socket.emit("chat-error", { message: "User not found" });
-            return;
-          }
+          const { roomId, limit = 50 } = data;
 
-          if (!data.messageId || !data.newMessage || !data.newMessage.trim()) {
-            socket.emit("chat-error", { message: "Invalid message data" });
-            return;
-          }
+          const messages = await ChatMessage.find({ roomId })
+            .sort({ timestamp: -1 })
+            .limit(limit);
 
-          const updatedMessage = await chatService.editMessage(
-            data.messageId,
-            user.id,
-            data.newMessage
-          );
-
-          if (updatedMessage) {
-            // Broadcast edited message to all users in the room
-            this.io.to(user.roomId).emit("chat-message-edited", {
-              message: updatedMessage,
-              editedAt: updatedMessage.editedAt,
-            });
-          } else {
-            socket.emit("chat-error", {
-              message:
-                "Failed to edit message - you can only edit your own messages",
-            });
-          }
+          socket.emit("chat-history", messages.reverse());
         } catch (error) {
-          console.error("Error editing message:", error);
-          socket.emit("chat-error", { message: "Failed to edit message" });
+          console.error("Error fetching chat history:", error);
+          socket.emit("error", { message: "Failed to fetch chat history" });
         }
       });
 
-      // Delete message
-      socket.on("chat-delete-message", async (data) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) {
-            socket.emit("chat-error", { message: "User not found" });
-            return;
-          }
-
-          if (!data.messageId) {
-            socket.emit("chat-error", { message: "Message ID required" });
-            return;
-          }
-
-          const success = await chatService.deleteMessage(
-            data.messageId,
-            user.id
-          );
-
-          if (success) {
-            // Broadcast message deletion to all users in the room
-            this.io.to(user.roomId).emit("chat-message-deleted", {
-              messageId: data.messageId,
-              deletedBy: user.id,
-              deletedAt: new Date(),
-            });
-          } else {
-            socket.emit("chat-error", {
-              message:
-                "Failed to delete message - you can only delete your own messages",
-            });
-          }
-        } catch (error) {
-          console.error("Error deleting message:", error);
-          socket.emit("chat-error", { message: "Failed to delete message" });
-        }
+      // Screen sharing
+      socket.on("start-screen-share", (data: { roomId: string }) => {
+        const { roomId } = data;
+        socket.to(roomId).emit("user-started-screen-share", {
+          userId: socket.id,
+        });
       });
 
-      // Add reaction to message
-      socket.on("chat-add-reaction", async (data) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
-
-          if (!data.messageId || !data.emoji) {
-            socket.emit("chat-error", { message: "Invalid reaction data" });
-            return;
-          }
-
-          const success = await chatService.addReaction(
-            data.messageId,
-            user.id,
-            data.emoji
-          );
-
-          if (success) {
-            // Broadcast reaction to all users in the room
-            this.io.to(user.roomId).emit("chat-reaction-added", {
-              messageId: data.messageId,
-              userId: user.id,
-              userName: user.name,
-              emoji: data.emoji,
-              timestamp: new Date(),
-            });
-          }
-        } catch (error) {
-          console.error("Error adding reaction:", error);
-          socket.emit("chat-error", { message: "Failed to add reaction" });
-        }
+      socket.on("stop-screen-share", (data: { roomId: string }) => {
+        const { roomId } = data;
+        socket.to(roomId).emit("user-stopped-screen-share", {
+          userId: socket.id,
+        });
       });
 
-      // Remove reaction from message
-      socket.on("chat-remove-reaction", async (data) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
+      // Disconnect
+      socket.on("disconnect", async () => {
+        console.log(`Client disconnected: ${socket.id}`);
 
-          if (!data.messageId) {
-            socket.emit("chat-error", { message: "Message ID required" });
-            return;
-          }
+        const peer = mediasoupService.getPeer(socket.id);
+        if (peer) {
+          // Update room in database
+          await this.updateRoomParticipants(peer.roomId, socket.id, peer.userName, "leave");
 
-          const success = await chatService.removeReaction(
-            data.messageId,
-            user.id
-          );
-
-          if (success) {
-            // Broadcast reaction removal to all users in the room
-            this.io.to(user.roomId).emit("chat-reaction-removed", {
-              messageId: data.messageId,
-              userId: user.id,
-              timestamp: new Date(),
-            });
-          }
-        } catch (error) {
-          console.error("Error removing reaction:", error);
-          socket.emit("chat-error", { message: "Failed to remove reaction" });
-        }
-      });
-
-      // Typing indicator
-      socket.on("chat-typing", (data) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
-
-          const isTyping = Boolean(data?.isTyping);
-          chatService.setTyping(user.roomId, user.id, user.name, isTyping);
-
-          // Broadcast typing status to other users in the room (exclude sender)
-          socket.to(user.roomId).emit("chat-typing-update", {
-            userId: user.id,
-            userName: user.name,
-            isTyping,
-            timestamp: new Date(),
+          // Notify others
+          socket.to(peer.roomId).emit("user-left", {
+            userId: socket.id,
+            userName: peer.userName,
           });
-        } catch (error) {
-          console.error("Error handling typing:", error);
-        }
-      });
 
-      // Get unread message count
-      socket.on("chat-get-unread-count", async () => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) return;
-
-          const unreadCount = await chatService.getUnreadCount(
-            user.roomId,
-            user.id
-          );
-
-          socket.emit("chat-unread-count", {
-            count: unreadCount,
-            roomId: user.roomId,
+          // Remove typing indicator
+          this.typingUsers.delete(socket.id);
+          socket.to(peer.roomId).emit("user-stopped-typing", {
+            userId: socket.id,
           });
-        } catch (error) {
-          console.error("Error getting unread count:", error);
-          socket.emit("chat-unread-count", { count: 0, roomId: null });
         }
-      });
 
-      // Search messages
-      socket.on("chat-search-messages", async (data) => {
-        try {
-          const user = this.users.get(socket.id);
-          if (!user) {
-            socket.emit("chat-error", { message: "User not found" });
-            return;
+        // Remove peer from mediasoup
+        mediasoupService.removePeer(socket.id);
+
+        // Remove from userSockets map
+        for (const [userId, socketId] of this.userSockets.entries()) {
+          if (socketId === socket.id) {
+            this.userSockets.delete(userId);
+            break;
           }
-
-          if (!data?.searchTerm || !data.searchTerm.trim()) {
-            socket.emit("chat-search-results", {
-              messages: [],
-              searchTerm: "",
-              roomId: user.roomId,
-            });
-            return;
-          }
-
-          const messages = await chatService.searchMessages(
-            user.roomId,
-            data.searchTerm,
-            data.limit || 20
-          );
-
-          socket.emit("chat-search-results", {
-            messages,
-            searchTerm: data.searchTerm,
-            roomId: user.roomId,
-            count: messages.length,
-          });
-        } catch (error) {
-          console.error("Error searching messages:", error);
-          socket.emit("chat-error", { message: "Failed to search messages" });
         }
-      });
-
-      // ========== END ENHANCED CHAT FUNCTIONALITY ==========
-
-      // Leave room
-      socket.on("leave-room", () => {
-        this.handleUserLeave(socket.id);
-      });
-
-      // Handle disconnection
-      socket.on("disconnect", () => {
-        console.log(`User disconnected: ${socket.id}`);
-        this.handleUserLeave(socket.id);
       });
     });
   }
 
-  private async handleUserLeave(socketId: string) {
+  private async updateRoomParticipants(
+    roomId: string,
+    userId: string,
+    userName: string,
+    action: "join" | "leave"
+  ) {
     try {
-      const user = this.users.get(socketId);
-      if (!user) return;
+      let room = await Room.findOne({ roomId, isActive: true });
 
-      const room = this.rooms.get(user.roomId);
-      if (room) {
-        room.users.delete(user.id);
-
-        // Clear typing status
-        chatService.clearUserTyping(user.roomId, user.id);
-
-        // Notify other users
-        this.io.to(user.roomId).emit("user-left", {
-          userId: user.id,
-          users: Array.from(room.users.values()),
+      if (!room && action === "join") {
+        room = new Room({
+          roomId,
+          name: `Room ${roomId}`,
+          createdBy: userId,
+          isActive: true,
+          participants: [],
         });
-
-        // Clean up mediasoup peer
-        await mediasoupService.removePeer(user.id);
-
-        // Clean up empty rooms
-        if (room.users.size === 0) {
-          this.rooms.delete(user.roomId);
-          console.log(`Room ${user.roomId} deleted (empty)`);
-
-          // Stop recording if active
-          const recording = recordingService.getRecording(user.roomId);
-          if (recording && recording.status === "recording") {
-            await recordingService.stopRecording(user.roomId);
-          }
-        } else {
-          // Update recording participants
-          const participants = Array.from(room.users.values()).map(
-            (u) => u.name
-          );
-          recordingService.updateRecordingParticipants(
-            user.roomId,
-            participants
-          );
-        }
       }
 
-      this.users.delete(socketId);
-      console.log(`User ${user.name} left room ${user.roomId}`);
+      if (room) {
+        if (action === "join") {
+          room.participants.push({
+            userId,
+            userName,
+            joinedAt: new Date(),
+          });
+        } else if (action === "leave") {
+          const participant = room.participants.find(
+            (p) => p.userId === userId && !p.leftAt
+          );
+          if (participant) {
+            participant.leftAt = new Date();
+          }
+        }
+
+        await room.save();
+      }
     } catch (error) {
-      console.error("Error handling user leave:", error);
+      console.error("Error updating room participants:", error);
     }
-  }
-
-  // Get room info
-  public getRoomInfo(roomId: string) {
-    const room = this.rooms.get(roomId);
-    if (!room) return null;
-
-    return {
-      id: room.id,
-      users: Array.from(room.users.values()),
-      createdAt: room.createdAt,
-      userCount: room.users.size,
-    };
-  }
-
-  // Get all rooms
-  public getAllRooms() {
-    return Array.from(this.rooms.values()).map((room) => ({
-      id: room.id,
-      userCount: room.users.size,
-      createdAt: room.createdAt,
-    }));
   }
 }
 
-export default SocketService;
+export default new SocketService();

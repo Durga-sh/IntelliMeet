@@ -1,7 +1,7 @@
 "use client";
 import { Link } from "react-router-dom";
 import RegisterForm from "../components/auth/RegisterForm";
-import GoogleAuthButton from "../components/auth/GoogleAuthButton";
+
 
 const RegisterPage = () => {
   return (
@@ -26,7 +26,7 @@ const RegisterPage = () => {
         </div>
 
         <div className="mt-6">
-          <GoogleAuthButton />
+
         </div>
       </div>
     </div>

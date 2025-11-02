@@ -1,17 +1,18 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Video, Users, Plus } from "lucide-react";
-import { createRoom, joinRoom } from "../api/videoCall";
+import { createRoom } from "../api/videoCall";
 
 interface JoinCallProps {
-  onJoinCall: (roomId: string, userName: string) => void;
   onError: (error: string) => void;
 }
 
-const JoinCall: React.FC<JoinCallProps> = ({ onJoinCall, onError }) => {
+const JoinCall: React.FC<JoinCallProps> = ({ onError }) => {
+  const navigate = useNavigate();
   const [roomId, setRoomId] = useState("");
   const [userName, setUserName] = useState("");
   const [roomName, setRoomName] = useState("");
@@ -35,7 +36,7 @@ const JoinCall: React.FC<JoinCallProps> = ({ onJoinCall, onError }) => {
       if (response.success) {
         // Store username in localStorage for future use
         localStorage.setItem("userName", userName.trim());
-        onJoinCall(response.room.id, userName.trim());
+        navigate(`/room/${response.room.id}`);
       } else {
         onError(response.message || "Failed to create room");
       }
@@ -60,17 +61,9 @@ const JoinCall: React.FC<JoinCallProps> = ({ onJoinCall, onError }) => {
 
     setIsJoining(true);
     try {
-      const response = await joinRoom(roomId.trim(), {
-        userName: userName.trim(),
-      });
-
-      if (response.success) {
-        // Store username in localStorage for future use
-        localStorage.setItem("userName", userName.trim());
-        onJoinCall(roomId.trim(), userName.trim());
-      } else {
-        onError(response.message || "Failed to join room");
-      }
+      // Store username in localStorage for future use
+      localStorage.setItem("userName", userName.trim());
+      navigate(`/room/${roomId.trim()}`);
     } catch (error: any) {
       console.error("Error joining room:", error);
       onError(error.response?.data?.message || "Failed to join room");

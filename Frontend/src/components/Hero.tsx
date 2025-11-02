@@ -2,11 +2,20 @@ import { Button } from "./ui/button";
 import { ArrowRight, Play, Brain, Users, MessageSquare, Video, Mic, Share2, Bot } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { createRoom } from "../api/videoCall";
 
 const Hero = () => {
   const navigate = useNavigate();
   const [activeFeature, setActiveFeature] = useState(0);
   const [typedText, setTypedText] = useState("");
+  const [showJoinDialog, setShowJoinDialog] = useState(false);
+  const [roomId, setRoomId] = useState("");
+  const [userName, setUserName] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<"join" | "create">("create");
   
   const features = ["Video Calls", "AI Transcription", "Smart Summaries", "Live Collaboration"];
   const aiMessages = [
@@ -39,6 +48,56 @@ const Hero = () => {
     
     return () => clearInterval(typeInterval);
   }, [activeFeature]);
+
+  const handleCreateRoom = async () => {
+    if (!userName.trim()) {
+      alert("Please enter your name");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await createRoom({
+        roomName: `${userName}'s Meeting`,
+        createdBy: userName.trim(),
+      });
+
+      if (response.success) {
+        localStorage.setItem("userName", userName.trim());
+        navigate(`/room/${response.room.id}`);
+      } else {
+        alert(response.message || "Failed to create room");
+      }
+    } catch (error: any) {
+      console.error("Error creating room:", error);
+      alert("Failed to create room. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleJoinRoom = async () => {
+    if (!roomId.trim()) {
+      alert("Please enter a room ID");
+      return;
+    }
+
+    if (!userName.trim()) {
+      alert("Please enter your name");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      localStorage.setItem("userName", userName.trim());
+      navigate(`/room/${roomId.trim()}`);
+    } catch (error: any) {
+      console.error("Error joining room:", error);
+      alert("Failed to join room. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
@@ -96,7 +155,7 @@ const Hero = () => {
                 variant="hero" 
                 size="lg" 
                 className="group relative overflow-hidden"
-                onClick={() => navigate('/video-call')}
+                onClick={() => setShowJoinDialog(true)}
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-ai-primary to-ai-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
                 <span className="relative z-10">Join Room</span>
@@ -205,6 +264,98 @@ const Hero = () => {
           </div>
         </div>
       </div>
+
+      {/* Join/Create Room Dialog */}
+      <Dialog open={showJoinDialog} onOpenChange={setShowJoinDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Join or Create a Meeting</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 mt-4">
+            {/* Tab Selection */}
+            <div className="flex space-x-1 bg-muted p-1 rounded-lg">
+              <button
+                onClick={() => setActiveTab("create")}
+                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+                  activeTab === "create"
+                    ? "bg-card text-ai-primary shadow-sm border border-ai-primary/20"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Create Room
+              </button>
+              <button
+                onClick={() => setActiveTab("join")}
+                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+                  activeTab === "join"
+                    ? "bg-card text-ai-primary shadow-sm border border-ai-primary/20"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Join Room
+              </button>
+            </div>
+
+            {/* Create Room Form */}
+            {activeTab === "create" && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="create-name">Your Name</Label>
+                  <Input
+                    id="create-name"
+                    placeholder="Enter your name"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && handleCreateRoom()}
+                  />
+                </div>
+                <Button
+                  onClick={handleCreateRoom}
+                  disabled={isLoading || !userName.trim()}
+                  className="w-full"
+                  variant="hero"
+                >
+                  {isLoading ? "Creating..." : "Create & Join Room"}
+                </Button>
+              </div>
+            )}
+
+            {/* Join Room Form */}
+            {activeTab === "join" && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="join-room-id">Room ID</Label>
+                  <Input
+                    id="join-room-id"
+                    placeholder="Enter room ID"
+                    value={roomId}
+                    onChange={(e) => setRoomId(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="join-name">Your Name</Label>
+                  <Input
+                    id="join-name"
+                    placeholder="Enter your name"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && handleJoinRoom()}
+                  />
+                </div>
+                <Button
+                  onClick={handleJoinRoom}
+                  disabled={isLoading || !roomId.trim() || !userName.trim()}
+                  className="w-full"
+                  variant="hero"
+                >
+                  {isLoading ? "Joining..." : "Join Room"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 };

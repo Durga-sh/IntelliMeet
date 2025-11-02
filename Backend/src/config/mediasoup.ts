@@ -1,15 +1,11 @@
-import {
-  WorkerLogLevel,
-  WorkerLogTag,
-  RtpCodecCapability,
-} from "mediasoup/node/lib/types";
-import config from "./config";
+import { RtpCodecCapability, TransportListenInfo, WorkerLogLevel, WorkerLogTag } from "mediasoup/node/lib/types";
+import os from "os";
 
-export const mediasoupConfig = {
+export const config = {
   // Worker settings
   worker: {
-    rtcMinPort: config.MEDIASOUP_MIN_PORT,
-    rtcMaxPort: config.MEDIASOUP_MAX_PORT,
+    rtcMinPort: 10000,
+    rtcMaxPort: 10100,
     logLevel: "warn" as WorkerLogLevel,
     logTags: [
       "info",
@@ -18,12 +14,6 @@ export const mediasoupConfig = {
       "rtp",
       "srtp",
       "rtcp",
-      "rtx",
-      "bwe",
-      "score",
-      "simulcast",
-      "svc",
-      "sctp",
     ] as WorkerLogTag[],
   },
 
@@ -80,23 +70,29 @@ export const mediasoupConfig = {
 
   // WebRTC transport settings
   webRtcTransport: {
-    listenIps: [
+    listenInfos: [
       {
-        ip: config.MEDIASOUP_LISTEN_IP,
-        announcedIp: config.MEDIASOUP_ANNOUNCED_IP,
+        protocol: "udp" as const,
+        ip: "0.0.0.0",
+        announcedAddress: process.env.MEDIASOUP_ANNOUNCED_IP || getLocalIp(),
       },
-    ],
-    maxIncomingBitrate: 1500000,
+    ] as TransportListenInfo[],
     initialAvailableOutgoingBitrate: 1000000,
-  },
-
-  // Plain transport settings (for FFmpeg)
-  plainTransport: {
-    listenIp: {
-      ip: config.MEDIASOUP_LISTEN_IP,
-      announcedIp: config.MEDIASOUP_ANNOUNCED_IP,
-    },
-    rtcpMux: false,
-    comedia: true,
+    minimumAvailableOutgoingBitrate: 600000,
+    maxSctpMessageSize: 262144,
+    maxIncomingBitrate: 1500000,
   },
 };
+
+function getLocalIp(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]!) {
+      const { address, family, internal } = iface;
+      if (family === "IPv4" && !internal) {
+        return address;
+      }
+    }
+  }
+  return "127.0.0.1";
+}
